@@ -1,0 +1,55 @@
+# ============================================================
+# 基于 YOLO 的智能检测平台 · 源码仓库忽略清单
+# 仓库根目录 = helmet-detection-console/（只纳管业务源码）
+# 构建/打包脚本、母版、安装包与项目文档在上一层项目目录，不在本仓库。
+# ============================================================
+
+# ---------- 模型权重（体积大，且含超过 GitHub 100MB 单文件上限的权重） ----------
+# 两个目录语义不同、内容不可互换，永久不做去重：
+#   pretrained_models/ 官方预训练权重（训练新模型的起跑点）
+#   models_lib/        用户自训权重（已训练过，不能当起跑点）
+# 二者均不入库；换机请自行下载官方权重 / 另行备份自训权重。
+pretrained_models/
+models_lib/
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# ---------- 敏感凭据（绝不入库） ----------
+# backend/.secret_key 是 Flask 会话签名密钥，首次启动自动生成并持久化
+backend/.secret_key
+.env
+*.env
+db_credential.txt
+session_secret.txt
+instance.json
+
+# ---------- Python 运行产物 ----------
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# ---------- 运行期数据 / 日志 / 用户上传 ----------
+backend/logs/
+backend/runs/
+backend/uploads/
+datasets/
+runs/
+reports/
+db/
+*.log
+*.sql
+
+# ---------- 编辑器与系统临时文件 ----------
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# ---------- 构建产物（构建脚本在上一层 build/，本仓库不含） ----------
+dist/
+*.iss
