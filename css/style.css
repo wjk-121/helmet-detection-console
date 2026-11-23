@@ -324,7 +324,11 @@ table.data .op-del:hover{text-decoration:underline}
 .cur-model .ms-lbl{font-size:11px;color:var(--text-3)}
 .cur-model .ms-val{font-size:16px;font-weight:700;color:var(--accent);font-family:monospace}
 .model-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-top:16px}
-.model-card{background:var(--card);border:1px solid var(--line-soft);border-radius:12px;padding:16px;transition:.15s}
+/* 退出「填满整屏」：.dash-main>*:last-child 会给最后一个子元素 flex:1（用于让
+   历史列表之类撑满窗口），模型网格正好是页面最后一个子元素，于是被拉到底部；
+   grid 默认 align-items:stretch，卡片就跟着一起拉长。这里显式按内容高度排列。 */
+.dash-main>.model-grid{flex:0 0 auto;align-content:start}
+.model-card{background:var(--card);border:1px solid var(--line-soft);border-radius:12px;padding:16px;transition:.15s;display:flex;flex-direction:column}
 .model-card:hover{border-color:var(--accent)}
 .model-card.active{border-color:var(--accent);background:linear-gradient(180deg,rgba(201,152,107,.08),transparent)}
 .model-card .mc-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
@@ -338,7 +342,7 @@ table.data .op-del:hover{text-decoration:underline}
 .model-card .mc-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-bottom:14px}
 .model-card .mc-stats div{font-size:12px;color:var(--text-3)}
 .model-card .mc-stats b{color:var(--text);font-family:monospace;font-weight:600}
-.model-card .mc-actions{display:flex;gap:8px}
+.model-card .mc-actions{display:flex;gap:8px;margin-top:auto}
 .model-card .mc-actions .btn{flex:1;padding:8px;font-size:12.5px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 

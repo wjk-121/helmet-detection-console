@@ -491,6 +491,32 @@ def _gen_user_code(conn):
 
 
 # ---------- 启动初始化 ----------
+_DERIVED_TASK_SUFFIXES = ("-pose", "-seg", "-cls", "-obb")
+
+
+def _pick_default_model(files):
+    """首次初始化时挑「当前模型」：显式默认 > 常规检测模型 > 字典序第一个。
+
+    历史坑：以前直接取 sorted(files)[0]，而 '-'（45）< '.'（46），
+    yolo26m-pose.pt 永远排在 yolo26m.pt 前面 —— 清库重建后当前模型就变成
+    姿态估计权重（类别是人体关键点），业务侧自然"检测不出东西"。
+    现在优先 config.DEFAULT_MODEL（可用 HELMET_DEFAULT_MODEL 覆盖），
+    再不行就跳过 -pose/-seg/-cls/-obb 这些衍生任务权重。
+    """
+    if not files:
+        return None
+    preferred = (getattr(config, "DEFAULT_MODEL", "") or "").strip()
+    if preferred and preferred in files:
+        return preferred
+    if preferred:
+        logger.warning("[models] 配置的默认模型 %s 不在 models_lib，按常规检测模型挑选", preferred)
+    plain = [
+        f for f in files
+        if not os.path.splitext(f)[0].lower().endswith(_DERIVED_TASK_SUFFIXES)
+    ]
+    return (plain or files)[0]
+
+
 def init_models_db():
     """扫描 models_lib，同步到 models 表；选一个当前模型。"""
     files = detector.scan_models()
@@ -512,10 +538,12 @@ def init_models_db():
             cur.execute("SELECT id FROM models WHERE is_current=1")
             cur_existing = cur.fetchone()
             if not cur_existing and files:
+                chosen = _pick_default_model(files)
                 cur.execute(
-                    "UPDATE models SET is_current=1 WHERE file_name=%s", (files[0],)
+                    "UPDATE models SET is_current=1 WHERE file_name=%s", (chosen,)
                 )
-                detector.set_current(files[0])
+                detector.set_current(chosen)
+                logger.info("[models] 首次初始化当前模型：%s（候选 %d 个）", chosen, len(files))
             elif cur_existing:
                 with conn.cursor() as cur2:
                     cur2.execute(
@@ -774,9 +802,11 @@ def list_models():
         result = []
         loaded = list(detector._models.keys())  # 内存里已加载的
         for r in rows:
-            # 懒回填真实元信息：库里 tags 为空时，加载模型读类别数/参数量
+            cached_classes = _parse_classes(r.get("classes"))
+            # 懒回填真实元信息：tags 与 classes 都为空时才加载模型读类别数/参数量。
+            # （两者任一有值就够展示，避免「classes 已写好、tags 为空」的旧库反复加载模型）
             # 与 refresh-meta 同样的保护：显存预检 + 读后即卸，避免列表接口拖垮显存
-            if not r["tags"]:
+            if not r["tags"] and not cached_classes:
                 ok, free = _vram_ok()
                 if not ok:
                     logger.warning("[models] 跳过 %s 元信息回填：显存不足（剩余 %sMB）",
@@ -793,7 +823,7 @@ def list_models():
                                  r["id"]),
                             )
                         r["tags"] = info["names"]
-                        r["classes"] = info.get("names_list") or []
+                        cached_classes = info.get("names_list") or []
                         r["params"] = f'{info["params_m"]} M'
                     except Exception as e:
                         logger.warning("[models] 读取 %s 元信息失败: %s", r['file_name'], e)
@@ -801,16 +831,16 @@ def list_models():
                         # 读完即卸：不动当前模型，也不动本来就在缓存里的模型
                         if not was_loaded and r["file_name"] != detector.get_current():
                             detector.unload(r["file_name"])
+            tags_list = r["tags"].split(",") if r["tags"] else list(cached_classes)
             size_mb = round(r["size_bytes"] / 1024 / 1024, 1)
             result.append({
                 "id": r["id"],
                 "name": r["name"],
                 "file_name": r["file_name"],
                 "desc": r["description"],
-                "tags": r["tags"].split(",") if r["tags"] else [],
+                "tags": tags_list,
                 # 具体类别名（供"查看类别"使用）：优先 classes 列，回落用 tags 拆出来的
-                "classes": _parse_classes(r.get("classes"))
-                          or (r["tags"].split(",") if r["tags"] else []),
+                "classes": cached_classes or tags_list,
                 "map": float(r["map_val"]) if r["map_val"] else None,
                 "params": r["params"],
                 "size": f"{size_mb} MB",
@@ -3233,16 +3263,33 @@ def _startup_orphan_sweep():
     """开机补清孤儿文件。
 
     上一轮遗留的孤儿（记录删了但图还在）不该一直躺在磁盘上。每次后端启动后
-    在后台扫一次即可；启动即全删（不再按修改时间 1 小时门槛），并限时 20 秒，
-    宁可下次再续也不把启动流程拖住。
+    在后台扫一次；启动即全删（不再按修改时间 1 小时门槛），单轮限时 20 秒。
+    单轮没扫完（truncated，常见于「刚清库 → 全盘文件都成孤儿」或删除被受控环境拖慢）
+    就接着再开一轮，最多 6 轮 —— 以前只跑一轮，几千个文件时清一半就收工，
+    剩下的要等下一次启动，看起来就像"回收不干净"。
+    第 1 轮 min_age=0（开机瞬间本进程还没产生上传，历史遗留一律可删）；
+    后续轮次用默认 3 分钟保护窗，避免误删"刚上传、还没入库"的新文件。
     """
     time.sleep(20)          # 等其它启动任务（模型加载等）先跑完
+    deleted = freed = failed = 0
     try:
-        r = _sweep_orphan_files(dry=False, deadline=time.monotonic() + 20, min_age=0)
-        if r["deleted"] or r["failed"] or r["truncated"]:
+        for i in range(6):
+            r = _sweep_orphan_files(
+                dry=False,
+                deadline=time.monotonic() + 20,
+                min_age=0 if i == 0 else _ORPHAN_SAFE_SECONDS,
+            )
+            deleted += r["deleted"]
+            freed += r["freed_bytes"]
+            failed += r["failed"]
+            if not r["truncated"]:
+                break
+            logger.info("[cleanup][boot] 第 %d 轮未扫完（本轮删 %d），继续下一轮",
+                        i + 1, r["deleted"])
+        if deleted or failed:
             logger.info(
-                "[cleanup][boot] 开机孤儿回收：删除 %d 个（%d 字节），失败 %d，未完成=%s",
-                r["deleted"], r["freed_bytes"], r["failed"], r["truncated"],
+                "[cleanup][boot] 开机孤儿回收：删除 %d 个（%d 字节），失败 %d",
+                deleted, freed, failed,
             )
         else:
             logger.info("[cleanup][boot] 开机孤儿回收：磁盘无孤儿文件")

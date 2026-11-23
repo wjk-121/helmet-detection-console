@@ -413,7 +413,10 @@ def init_db():
                     name VARCHAR(128) NOT NULL,
                     file_name VARCHAR(255) NOT NULL UNIQUE,
                     description VARCHAR(255) DEFAULT '',
-                    tags VARCHAR(255) DEFAULT '',
+                    -- tags 早期只有 255 字，但系统会把「类别名逗号串」回填进来：
+                    -- 常规 COCO 模型 80 类就有 620 字，会直接触发 1406 Data too long，
+                    -- 导致 tags/params/classes 三项一起写库失败。故改为 TEXT。
+                    tags TEXT,
                     map_val VARCHAR(16) DEFAULT '',
                     params VARCHAR(32) DEFAULT '',
                     size_bytes BIGINT DEFAULT 0,
@@ -676,6 +679,24 @@ def _migrate():
             cur.execute("ALTER TABLE models ADD COLUMN classes JSON DEFAULT NULL")
         except Exception as e:
             logger.debug("迁移兼容（列/表已存在或旧库不支持）: %s", e)
+
+        # models.tags 扩容：旧库是 VARCHAR(255)，装不下 80 类模型的类别名逗号串
+        # （yolo26m.pt 实测 620 字），写库会报 1406 Data too long → 元信息永远填不上。
+        # 只在确认仍是定长字符类型时才 ALTER，避免每次启动都重建一次表。
+        try:
+            cur.execute(
+                "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='models' AND COLUMN_NAME='tags'",
+                (DB_NAME,),
+            )
+            _tag_col = cur.fetchone()
+            _tag_type = str((_tag_col or {}).get("DATA_TYPE", "")).lower()
+            if _tag_type in ("varchar", "char"):
+                cur.execute("ALTER TABLE models MODIFY COLUMN tags TEXT")
+                logger.info("[db] models.tags 已从 %s 扩容为 TEXT（类别名可超 255 字）",
+                            _tag_type.upper())
+        except Exception as e:
+            logger.warning("[db] models.tags 扩容失败（元信息可能仍写不进去）: %s", e)
 
         # ---- 自定义动作组相关新表 ----
         try:

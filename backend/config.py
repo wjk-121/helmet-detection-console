@@ -16,7 +16,9 @@ DB_CONFIG = {
     "password": os.environ.get("HELMET_DB_PASSWORD", "root"),
     "charset": "utf8mb4",
 }
-DB_NAME = "helmet_console"
+# 库名允许环境变量覆盖：reset_dev_db.py 的 --db 参数、临时自测库都靠它生效
+# （否则「DROP 了 foo 却把表建到 helmet_console」会出现两处不一致）。
+DB_NAME = os.environ.get("HELMET_DB_NAME", "helmet_console")
 
 # ---------- 管理员手机号 ----------
 # 默认管理员（admin/admin）的手机号，用于验证码登录 / 找回密码。
@@ -63,6 +65,15 @@ DB_POOL_SIZE = 8
 # ---------- 目录 ----------
 # 模型加载目录（用户指定）
 MODELS_DIR = os.path.join(PROJECT_DIR, "models_lib")
+
+# ---------- 默认推理模型 ----------
+# 「库里还没有任何当前模型」时，首次初始化选哪个权重当当前模型（只填文件名）。
+# 历史坑：不指定时按文件名字典序取第一个，而 '-'（45）小于 '.'（46），
+# 会选中 yolo26m-pose.pt（姿态估计，类别是人体关键点，不是业务检测类别）。
+# 留空或文件不存在时，业务代码优先选「非 -pose/-seg/-cls/-obb」的常规检测模型，
+# 都没有才退回字典序第一个。可被环境变量 HELMET_DEFAULT_MODEL 覆盖
+# （打包侧由启动器按 config.env 注入）。
+DEFAULT_MODEL = os.environ.get("HELMET_DEFAULT_MODEL", "yolo26m.pt")
 # 上传与结果
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 UPLOAD_IMAGES = os.path.join(UPLOAD_DIR, "images")
