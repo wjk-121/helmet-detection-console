@@ -315,6 +315,36 @@ function injectChromes(){
 }
 injectChromes();
 
+// 侧栏在每个视图里各克隆了一份（每个 [data-sidebar] 一个），切视图换的是另一份 DOM，
+// 各自的 scrollTop 互不相通 —— 表现就是「点一下菜单，侧栏跳回顶部 / 跳到底部」。
+// 这里只维护一个全局位置，切页后统一搬过去，再保证高亮项落在可视区内。
+var _navScrollTop = 0;
+document.addEventListener('scroll', function(ev){
+  var t = ev.target;
+  if(t && t.classList && t.classList.contains('nav')) _navScrollTop = t.scrollTop;
+}, true);   // scroll 事件不冒泡，必须用捕获
+
+// 判断导航项是否对应当前视图：data-view 精确匹配；
+// data-view-alias 用于「子页面没有独立侧栏项」的情况，比如工控页归到「设备控制」分组头，
+// 否则进工控页时整列没有一项是高亮的。
+function navItemMatchesView(n, view){
+  if(n.getAttribute('data-view') === view) return true;
+  var alias = n.getAttribute('data-view-alias') || '';
+  return alias ? alias.split(/\s+/).indexOf(view) >= 0 : false;
+}
+
+// 切视图后把侧栏滚动位置搬到新那份 DOM，并把高亮项拉进可视区（只动侧栏内部，不碰页面滚动）
+function applySideNavScroll(viewEl){
+  document.querySelectorAll('.nav').forEach(function(n){ n.scrollTop = _navScrollTop; });
+  var nav = viewEl ? viewEl.querySelector('.nav') : null;
+  if(!nav) return;
+  var act = nav.querySelector('.nav-item.active');
+  if(!act) return;
+  var nr = nav.getBoundingClientRect(), ar = act.getBoundingClientRect();
+  if(ar.top < nr.top) nav.scrollTop += (ar.top - nr.top);
+  else if(ar.bottom > nr.bottom) nav.scrollTop += (ar.bottom - nr.bottom);
+}
+
 // 拓展菜单分组开合与当前视图联动（工控页展开，其余收起）
 function syncNavGroupOpen(view){
   // 拓展功能中心与工控页同属「设备控制」分组，两个页面下都保持展开，
@@ -421,10 +451,11 @@ function go(view){
   else { window.scrollTo(0,0); }                   // 应用内跳转：回顶部
   closeSidebar();
   document.querySelectorAll('.nav-item').forEach(function(n){
-    n.classList.toggle('active', n.getAttribute('data-view')===view);
+    n.classList.toggle('active', navItemMatchesView(n, view));
   });
   // 拓展菜单展开状态统一：进入工控页自动展开，其他页面自动收起
   syncNavGroupOpen(view);
+  applySideNavScroll(el);
   if(location.hash!=='#'+view){ history.replaceState(null,'','#'+view); }
   if(view==='register') loadCaptcha('register');
   if(view==='profile'){ loadCaptcha('name'); loadCaptcha('pw'); }
@@ -1173,7 +1204,7 @@ function renderDetectDownloadBtn(recordId){
 // 吞掉/缓冲（fetch 永远收不到第一个字节，页面卡死在"准备中"），而普通 JSON 请求全部
 // 正常 —— 因此只依赖已被验证可靠的 JSON 通道（启动/轮询/取消全用 GET + JSON）。
 // 另：版本自检（APP_VERSION 与 /api/version 不符则自动硬刷新），彻底杜绝“一直跑旧 JS”。
-var APP_VERSION = "20261124a4";
+var APP_VERSION = "20261124a5";
 var _dlBusy = false;        // 本页是否正在下载（即时防连点）
 var _dlWatch = null;        // 超时看门狗定时器
 var _dlCancelled = false;   // 是否为用户主动取消
