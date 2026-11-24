@@ -5,6 +5,8 @@ import json
 import time
 import uuid
 import functools
+import re
+from urllib.parse import urlsplit
 import shutil
 import threading
 import queue
@@ -13,6 +15,7 @@ import subprocess
 import pymysql
 from datetime import timedelta as _timedelta
 import base64
+import gzip
 import io
 import random
 import string
@@ -73,6 +76,12 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 # cookie 本身每次响应都会滚动续期；真正的"闲置失效 / 30 天强制重登"由后端双闸门判定，
 # 这里的值只保证 cookie 不会先于后端判定把会话悄悄掐掉（避免无提示的裸 401）。
 app.config["PERMANENT_SESSION_LIFETIME"] = _timedelta(days=30)
+# ===== 会话 Cookie 与 CSRF 基线（S-3）=====
+# SameSite=Lax：跨站发起的 POST/PUT/DELETE 不会带 Cookie，配合下面的 Origin 同源校验，
+# 无需引入 flask-wtf、也不改前端任何调用方式，就能挡住「第三方页面伪造删除/改密请求」。
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+# 反向代理/内网直连下 cookie 不走 https，Secure 打开会导致登录态完全失效，故不启用。
 
 
 # 413：请求体超过 MAX_CONTENT_LENGTH（全局单个请求体上限，主要服务于视频）。
@@ -85,6 +94,91 @@ def _too_large(e):
         "ok": False,
         "msg": f"文件过大，单个文件不能超过 {hint}",
     }), 413
+
+# ===== CSRF 同源校验（S-3）=====
+# 写接口只允许同源页面发起：浏览器跨站 POST 会带 Origin/Referer，
+# 与当前 Host 不一致就直接 403。脚本/桌面客户端不带这两个头，照旧放行。
+@app.before_request
+def _csrf_same_origin_guard():
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    host = request.host or ""
+
+    def _same(u):
+        try:
+            p = urlsplit(u)
+        except Exception:
+            return False
+        return (p.netloc or "") == host
+
+    origin = request.headers.get("Origin")
+    if origin is not None:
+        if origin == "null" or not _same(origin):
+            logger.warning("[csrf] 拒绝跨站写请求 %s %s origin=%s", request.method, request.path, origin)
+            return jsonify({"ok": False, "msg": "请求来源不合法，已拒绝"}), 403
+        return None
+    ref = request.headers.get("Referer")
+    if ref and not _same(ref):
+        logger.warning("[csrf] 拒绝跨站写请求 %s %s referer=%s", request.method, request.path, ref)
+        return jsonify({"ok": False, "msg": "请求来源不合法，已拒绝"}), 403
+    return None
+
+
+# ===== 用户名规则（D-32）=====
+# 前端提示写的是「3-20 位，字母/数字/下划线」，但后端以前只校验长度，
+# 「张三」「a b」都能注册成功。这里用同一条正则兜住注册/改用户名两处。
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,20}$")
+USERNAME_RULE_MSG = "用户名只能包含字母、数字、下划线，3-20 位"
+
+
+# ===== 上传文件真实类型校验（S-4）=====
+# 只校验扩展名挡不住「把 exe/txt 改名成 .jpg」这类上传。落盘前先读文件头做魔数比对，
+# 内容与扩展名不符直接 400 —— 既能挡误传，也能挡把可执行文件伪装成图片塞进 uploads。
+def _sniff_media_kind(head):
+    """按文件头判断真实类型，返回 'image' / 'video' / None（无法识别）。"""
+    if not head:
+        return None
+    if head.startswith(b"\xff\xd8\xff"):          # JPEG
+        return "image"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):     # PNG
+        return "image"
+    if head.startswith(b"GIF8"):                  # GIF
+        return "image"
+    if head.startswith(b"BM"):                    # BMP
+        return "image"
+    if len(head) >= 12 and head[:4] == b"RIFF":
+        sub = head[8:12]
+        if sub == b"WEBP":
+            return "image"
+        if sub in (b"AVI ", b"AVI"):              # AVI
+            return "video"
+    if len(head) >= 12 and head[4:8] == b"ftyp":  # MP4 / MOV（ISO BMFF）
+        return "video"
+    if head.startswith(b"\x1a\x45\xdf\xa3"):      # MKV / WebM（EBML）
+        return "video"
+    return None
+
+
+def _check_upload_kind(f, want):
+    """读取流前 32 字节判断真实类型，读完把指针拨回开头。
+    返回 None 表示通过，否则返回给用户看的错误文案。"""
+    try:
+        head = f.stream.read(32)
+        try:
+            f.stream.seek(0)
+        except Exception:
+            pass
+    except Exception:
+        return None      # 读不了就交给后续解码逻辑判断，别在这里误杀
+    kind = _sniff_media_kind(head)
+    if kind == want:
+        return None
+    if kind is None:
+        return "无法识别的文件内容，请确认文件没有损坏或改名"
+    if want == "image":
+        return "文件内容不是有效图片（扩展名与实际格式不符）"
+    return "文件内容不是有效视频（扩展名与实际格式不符）"
+
 
 # 全局 JSON 序列化：datetime 统一为 "YYYY-MM-DD HH:MM:SS" 中文格式
 from flask.json.provider import DefaultJSONProvider
@@ -132,9 +226,55 @@ for sub in ["css", "js", "assets"]:
     )
 
 
+# ===== 响应压缩（P-4）=====
+# 前端没有构建/打包步骤：index.html 235 KB + js/app.js 542 KB 每次首屏都原样传一遍。
+# 在响应层做 gzip（level 6）即可，HTML/CSS/JS/JSON 一般能压到原来的 1/4，代码零改动。
+# 两个坑：
+#   1) send_from_directory 返回的响应 direct_passthrough=True，不先关掉就拿不到响应体；
+#   2) 只压文本类 MIME，图片/视频/下载件跳过 —— 它们本来就压过，再压纯属浪费 CPU。
+_GZIP_MIMES = (
+    "text/html", "text/css", "text/plain", "text/javascript",
+    "application/javascript", "application/json", "application/xml",
+    "text/xml", "image/svg+xml",
+)
+_GZIP_MIN_BYTES = 1024
+
+
+@app.after_request
+def _gzip_response(resp):
+    try:
+        if resp.status_code != 200 and not (200 <= resp.status_code < 300):
+            return resp
+        if resp.headers.get("Content-Encoding"):
+            return resp
+        if resp.mimetype not in _GZIP_MIMES:
+            return resp
+        if "gzip" not in (request.headers.get("Accept-Encoding") or "").lower():
+            return resp
+        if resp.direct_passthrough:
+            resp.direct_passthrough = False
+        data = resp.get_data()
+        if len(data) < _GZIP_MIN_BYTES:
+            return resp
+        body = gzip.compress(data, 6)
+        if len(body) >= len(data):
+            return resp
+        resp.set_data(body)
+        resp.headers["Content-Encoding"] = "gzip"
+        resp.headers["Content-Length"] = str(len(body))
+        resp.headers.add("Vary", "Accept-Encoding")
+        return resp
+    except Exception as e:
+        # 压缩是优化项，任何意外都不能影响正常响应
+        logger.debug("[gzip] 跳过压缩: %s", e)
+        return resp
+
+
 # 前端版本自检：app.js 内置 APP_VERSION，加载时与这里比对，不一致就自动硬刷新，
 # 彻底杜绝“浏览器一直跑旧 JS、下载逻辑永远不更新”这类玄学报错。
-APP_VERSION = "20261029a1"
+# 前端版本号唯一真源：改前端（js/app.js / css / index.html）必须同步改这里，
+# 并同步 index.html 里的 js/app.js?v=... 查询串与侧栏 #side-version 的 data-ver（D-45）。
+APP_VERSION = "20261124a2"
 
 
 @app.get("/api/version")
@@ -221,8 +361,10 @@ def _parse_device():
 # 内存态清理：每 60 秒最多执行一次，避免每个请求都遍历字典
 _LAST_PURGE_TS = 0.0
 _PURGE_INTERVAL_SEC = 60
-# 在线状态超过该秒数视为离线（前端 5s 轮询，留足余量）
-ONLINE_TTL_SECONDS = 120
+# 在线状态超过该秒数视为离线（前端 5s 轮询）。
+# 取 300 秒是为了跟界面上「活跃会话 / 近 5 分钟」的文案对齐：
+# 原来 120 秒时，用户切个窗口、网络抖一下就会从 1 掉成 0，数字看起来在乱跳（D-44）。
+ONLINE_TTL_SECONDS = 300
 
 
 def _purge_memory_state():
@@ -637,17 +779,19 @@ _CAPTCHA_STORE = {}  # cid -> (code, expire_ts)
 def _gen_captcha():
     code = "".join(random.choice(_CAPTCHA_CHARS) for _ in range(4))
     w, h = 120, 44
-    img = Image.new("RGB", (w, h), (245, 247, 250))
+    # 深色底 + 浅色字符：与登录卡的深色主题同色系，不再是一块突兀的白板。
+    # 对比度约 12:1（底 #1e2530 / 字 #e6e9ef），远高于 4.5:1 可读性下限。
+    img = Image.new("RGB", (w, h), (30, 37, 48))
     draw = ImageDraw.Draw(img)
     # 噪点
     for _ in range(120):
         draw.point((random.randint(0, w), random.randint(0, h)),
-                   fill=(random.randint(150, 220), random.randint(150, 220), random.randint(150, 220)))
+                   fill=(random.randint(60, 110), random.randint(60, 110), random.randint(70, 120)))
     # 干扰线
     for _ in range(4):
         draw.line([(random.randint(0, w//2), random.randint(0, h)),
                    (random.randint(w//2, w), random.randint(0, h))],
-                  fill=(random.randint(120, 180), random.randint(120, 180), random.randint(120, 180)), width=1)
+                  fill=(random.randint(80, 130), random.randint(80, 130), random.randint(90, 140)), width=1)
     # 字符（轻微旋转）
     try:
         font = ImageFont.truetype("arial.ttf", 26)
@@ -657,7 +801,7 @@ def _gen_captcha():
     for ch in code:
         ch_img = Image.new("RGBA", (28, 34), (0, 0, 0, 0))
         ch_draw = ImageDraw.Draw(ch_img)
-        ch_draw.text((2, 2), ch, font=font, fill=(random.randint(30, 90), random.randint(30, 90), random.randint(30, 90)))
+        ch_draw.text((2, 2), ch, font=font, fill=(random.randint(215, 240), random.randint(218, 242), random.randint(225, 248)))
         ch_img = ch_img.rotate(random.randint(-25, 25), expand=1)
         img.paste(ch_img, (x, random.randint(2, 8)), ch_img)
         x += 26
@@ -709,6 +853,8 @@ def register():
             if not username:
                 username = "user_" + "".join(random.choices(string.digits, k=6))
             else:
+                if not USERNAME_RE.match(username):
+                    return jsonify({"ok": False, "msg": USERNAME_RULE_MSG}), 400
                 cur.execute("SELECT id FROM users WHERE username=%s", (username,))
                 if cur.fetchone():
                     return jsonify({"ok": False, "msg": "用户名已存在"}), 400
@@ -1231,6 +1377,10 @@ def detect_image():
     ext = os.path.splitext(f.filename)[1].lower()
     if ext not in ALLOWED_IMAGE_EXT:
         return jsonify({"ok": False, "msg": "不支持的图片格式"}), 400
+    # S-4：扩展名对不代表文件真是图片，落盘前先比对文件头魔数
+    _bad = _check_upload_kind(f, "image")
+    if _bad:
+        return jsonify({"ok": False, "msg": _bad}), 400
 
     import cv2
     import numpy as np
@@ -1305,15 +1455,15 @@ def detect_image():
             cur.execute(
                 "INSERT INTO detection_records "
                 "(user_id, username, image_name, image_url, result_url, boxes_url, media_type, "
-                " conclusion, stats_json, boxes_json, model_name, duration_ms) "
-                "VALUES (%s,%s,%s,%s,%s,%s,'image',%s,%s,%s,%s,%s)",
+                " conclusion, stats_json, boxes_json, model_name, duration_ms, cls_count, obj_count) "
+                "VALUES (%s,%s,%s,%s,%s,%s,'image',%s,%s,%s,%s,%s,%s,%s)",
                 (session["user_id"], session["username"], f.filename,
                  f"/uploads/images/{orig_name}",
                  f"/uploads/images/{orig_name}",   # result_url：不再有结果图，指向原图（框由前端画）
                  boxes_url or "",
                  conclusion, json.dumps(stats, ensure_ascii=False),
                  json.dumps(boxes, ensure_ascii=False),
-                 detector.get_current(), elapsed),
+                 detector.get_current(), elapsed, len(stats), total),
             )
             record_id = cur.lastrowid
         conn.commit()
@@ -2300,15 +2450,15 @@ def _finalize_video_result(uid, filename, total, inferred, stats, elapsed,
             cur.execute(
                 "INSERT INTO detection_records "
                 "(user_id, username, image_name, image_url, result_url, source_url, boxes_url, media_type, "
-                " conclusion, stats_json, boxes_json, model_name, duration_ms) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,'video',%s,%s,%s,%s,%s)",
+                " conclusion, stats_json, boxes_json, model_name, duration_ms, cls_count, obj_count) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,'video',%s,%s,%s,%s,%s,%s,%s)",
                 (session["user_id"], session["username"], filename,
                  source_url,                    # image_url：视频记录不再有封面帧，指向原视频
                  source_url,                    # result_url：同上（展示一律用原视频 + 前端框）
                  source_url, boxes_url or "",
                  conclusion, json.dumps(stats, ensure_ascii=False),
                  json.dumps(rep_boxes, ensure_ascii=False),
-                 model_file or detector.get_current(), elapsed),
+                 model_file or detector.get_current(), elapsed, len(stats), total_n),
             )
             record_id = cur.lastrowid
         conn.commit()
@@ -2356,6 +2506,10 @@ def detect_video():
     ext = os.path.splitext(f.filename)[1].lower()
     if ext not in ALLOWED_VIDEO_EXT:
         return jsonify({"ok": False, "msg": "不支持的视频格式"}), 400
+    # S-4：扩展名对不代表文件真是视频，落盘前先比对文件头魔数
+    _bad = _check_upload_kind(f, "video")
+    if _bad:
+        return jsonify({"ok": False, "msg": _bad}), 400
 
     uid, in_path, out_path, err = _save_and_precheck_video(f, ext)
     if err:
@@ -2419,6 +2573,10 @@ def detect_video_stream():
     ext = os.path.splitext(f.filename)[1].lower()
     if ext not in ALLOWED_VIDEO_EXT:
         return jsonify({"ok": False, "msg": "不支持的视频格式"}), 400
+    # S-4：扩展名对不代表文件真是视频，落盘前先比对文件头魔数
+    _bad = _check_upload_kind(f, "video")
+    if _bad:
+        return jsonify({"ok": False, "msg": _bad}), 400
 
     uid, in_path, out_path, err = _save_and_precheck_video(f, ext)
     if err:
@@ -3044,15 +3202,15 @@ def detect_batch_image():
                     cur.execute(
                         "INSERT INTO detection_records "
                         "(user_id, username, image_name, image_url, result_url, boxes_url, media_type, "
-                        " conclusion, stats_json, boxes_json, model_name, duration_ms) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,'image',%s,%s,%s,%s,%s)",
+                        " conclusion, stats_json, boxes_json, model_name, duration_ms, cls_count, obj_count) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,'image',%s,%s,%s,%s,%s,%s,%s)",
                         (session["user_id"], session["username"], f.filename,
                          f"/uploads/images/{orig_name}",
                          f"/uploads/images/{orig_name}",
                          boxes_url or "",
                          conclusion, json.dumps(stats, ensure_ascii=False),
                          json.dumps(boxes, ensure_ascii=False),
-                         detector.get_current(), elapsed),
+                         detector.get_current(), elapsed, len(stats), total),
                     )
                     rec_id = cur.lastrowid
                 conn.commit()   # 逐张提交：中途取消时已完成的部分能保留下来
@@ -3079,11 +3237,69 @@ def detect_batch_image():
 
 
 # ==================== 历史 ====================
+# 历史列表排序：查询串只传语义键，真实列名从这张表取，杜绝 SQL 片段注入
+_HISTORY_SORT_COLS = {
+    "time": "created_at",
+    "count": "obj_count",
+    "cls": "cls_count",
+    "name": "image_name",
+}
+
+
+def _is_ymd(s):
+    """严格的 YYYY-MM-DD 校验：日期只接受这种格式，防止把怪字符串塞进 DATE_ADD。"""
+    if not s or len(s) != 10:
+        return False
+    try:
+        time.strptime(s, "%Y-%m-%d")
+        return True
+    except Exception:
+        return False
+
+
+@app.get("/api/history/classes")
+@login_required
+def history_classes():
+    """历史记录里出现过的类别（取最近 500 条汇总），供筛选下拉用。"""
+    conn = db.get_db()
+    try:
+        with conn.cursor() as cur:
+            ands, params = [], []
+            if session.get("role") != "admin":
+                ands.append("user_id=%s")
+                params.append(session["user_id"])
+            wsql = (" WHERE " + " AND ".join(ands)) if ands else ""
+            cur.execute("SELECT stats_json FROM detection_records" + wsql +
+                        " ORDER BY id DESC LIMIT 500", params)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    seen = {}
+    for r in rows:
+        try:
+            st = json.loads(r["stats_json"] or "{}")
+        except Exception:
+            continue
+        if isinstance(st, dict):
+            for k in st:
+                seen[k] = seen.get(k, 0) + 1
+    names = sorted(seen.keys(), key=lambda x: (-seen[x], x))
+    return jsonify({"ok": True, "classes": names})
+
+
 @app.get("/api/history")
 @login_required
 def list_history():
     user_filter = request.args.get("user", "")
     kw = (request.args.get("kw") or "").strip()
+    date_from = (request.args.get("date_from") or "").strip()
+    date_to = (request.args.get("date_to") or "").strip()
+    cls_filter = (request.args.get("cls") or "").strip()
+    # 排序：字段名只认白名单，值直接来自查询串，绝不能拼进 SQL
+    sort_key = (request.args.get("sort") or "time").strip().lower()
+    order = (request.args.get("order") or "desc").strip().lower()
+    sort_col = _HISTORY_SORT_COLS.get(sort_key, "created_at")
+    sort_dir = "ASC" if order == "asc" else "DESC"
     page, limit, offset = _paging()
     conn = db.get_db()
     try:
@@ -3100,13 +3316,24 @@ def list_history():
             if kw:
                 ands.append("image_name LIKE %s")
                 params.append("%" + kw + "%")
+            # 日期范围：只认 YYYY-MM-DD，按整天算（结束日含当天全时段）
+            if _is_ymd(date_from):
+                ands.append("created_at >= %s")
+                params.append(date_from + " 00:00:00")
+            if _is_ymd(date_to):
+                ands.append("created_at < DATE_ADD(%s, INTERVAL 1 DAY)")
+                params.append(date_to + " 00:00:00")
+            # 类别：stats_json 里出现该类别键即命中（参数化，category 名不当 SQL 片段）
+            if cls_filter and cls_filter != "all":
+                ands.append("stats_json LIKE %s")
+                params.append('%"' + cls_filter.replace("%", r"\%").replace("_", r"\_") + '"%')
             wsql = (" WHERE " + " AND ".join(ands)) if ands else ""
             cur.execute("SELECT COUNT(*) AS c FROM detection_records" + wsql, params)
             total = cur.fetchone()["c"]
             sql = ("SELECT id, username, image_name, image_url, result_url, source_url, boxes_url, conclusion, "
-                   "stats_json, boxes_json, model_name, duration_ms, created_at "
+                   "stats_json, boxes_json, model_name, duration_ms, cls_count, obj_count, created_at "
                    "FROM detection_records" + wsql +
-                   " ORDER BY id DESC LIMIT %s OFFSET %s")
+                   " ORDER BY " + sort_col + " " + sort_dir + ", id DESC LIMIT %s OFFSET %s")
             cur.execute(sql, params + [limit, offset])
             rows = cur.fetchall()
         out = []
@@ -3132,6 +3359,9 @@ def list_history():
                 "boxes": boxes,
                 "model_name": r["model_name"],
                 "duration_ms": r["duration_ms"],
+                # 排序用的冗余列；老数据未回填前为 0，前端回退到 stats 现算
+                "cls_count": r.get("cls_count") or 0,
+                "obj_count": r.get("obj_count") or 0,
                 "created_at": r["created_at"].strftime("%Y/%m/%d %H:%M:%S"),
             })
         return jsonify({"ok": True, "records": out, "total": total,
@@ -3640,7 +3870,9 @@ def list_users():
         for r in rows:
             d = dict(r)
             info = ONLINE_MAP.get(r["id"])
-            if info and (now - info["ts"]) <= 12:
+            # 单人「在线」用 15 秒硬窗口（≈3 次心跳），单次丢包/抖动不会立刻变成离线；
+            # 而 KPI 里的活跃会话数走 ONLINE_TTL_SECONDS（5 分钟），两者口径不同是有意的。
+            if info and (now - info["ts"]) <= 15:
                 d["online"] = True
                 d["device"] = info.get("device", "")
             else:
@@ -3727,6 +3959,27 @@ def get_article(aid):
         conn.close()
 
 
+@app.post("/api/articles/<int:aid>/status")
+@admin_required
+def set_article_status(aid):
+    """上线/下线/转草稿：只改 status 字段，不删数据（D-29）。
+    前台 /api/articles/public 与详情接口本来就只查 published，下线即从宣教页消失。"""
+    data = request.get_json(force=True, silent=True) or {}
+    status = (data.get("status") or "").strip().lower()
+    if status not in ("published", "offline", "draft"):
+        return jsonify({"ok": False, "msg": "状态只能是 published / offline / draft"}), 400
+    conn = db.get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE articles SET status=%s WHERE id=%s", (status, aid))
+            if cur.rowcount == 0:
+                return jsonify({"ok": False, "msg": "文章不存在"}), 404
+        conn.commit()
+        return jsonify({"ok": True, "status": status})
+    finally:
+        conn.close()
+
+
 @app.delete("/api/articles/<int:aid>")
 @admin_required
 def delete_article(aid):
@@ -3799,7 +4052,7 @@ def dashboard_stats():
             n_today = cur.fetchone()["c"]
             cur.execute("SELECT name FROM models WHERE is_current=1")
             row = cur.fetchone()
-            cur.execute("SELECT image_name, conclusion, created_at, media_type FROM detection_records ORDER BY created_at DESC LIMIT 4")
+            cur.execute("SELECT id, image_name, conclusion, created_at, media_type FROM detection_records ORDER BY created_at DESC LIMIT 4")
             recent = cur.fetchall()
         return jsonify({"ok": True, "records": n_records, "today": n_today,
                         "online": len(ONLINE_MAP),
@@ -3816,6 +4069,8 @@ def create_user():
     data = request.get_json(force=True)
     username = (data.get("username") or "").strip()
     phone = (data.get("phone") or "").strip()
+    if username and not USERNAME_RE.match(username):
+        return jsonify({"ok": False, "msg": USERNAME_RULE_MSG}), 400
     password = data.get("password") or ""
     role = data.get("role") or "user"
     if not phone or len(phone) != 11 or not phone.isdigit() or not phone.startswith("1"):
@@ -3923,8 +4178,8 @@ def change_username():
     if not ok:
         return jsonify({"ok": False, "msg": msg}), 400
     new_name = (data.get("new_username") or "").strip()
-    if len(new_name) < 3 or len(new_name) > 20:
-        return jsonify({"ok": False, "msg": "用户名需 3-20 位"}), 400
+    if not USERNAME_RE.match(new_name):
+        return jsonify({"ok": False, "msg": USERNAME_RULE_MSG}), 400
     conn = db.get_db()
     try:
         with conn.cursor() as cur:
@@ -4720,6 +4975,9 @@ def upload_feedback_img():
     ext = os.path.splitext(f.filename)[1].lower()
     if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
         return jsonify({"ok": False, "msg": "仅支持 jpg/png/gif/webp"}), 400
+    _bad = _check_upload_kind(f, "image")
+    if _bad:
+        return jsonify({"ok": False, "msg": _bad}), 400
     data = f.read()
     # 单张图片独立上限（与检测图片一致，防止解码 OOM）
     if len(data) > MAX_IMAGE_MB * 1024 * 1024:

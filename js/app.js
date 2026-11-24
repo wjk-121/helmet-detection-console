@@ -19,6 +19,9 @@ var state = {
 
 // ---------- 检测页阈值（与 backend/config.py 保持一致，单位：MB / 秒） ----------
 var IMG_MAX_MB = 50;
+// 与后端 config.ALLOWED_*_EXT 保持同一份清单：前端先拦，避免白传几百 MB 才被拒（D-20）
+var IMG_EXT_OK = ['jpg','jpeg','png','bmp','webp'];
+var VIDEO_EXT_OK = ['mp4','avi','mov','mkv'];
 var VIDEO_MAX_MB = 1024;            // 单个视频上限 1GB
 var VIDEO_MAX_SECONDS = 600;        // 视频时长上限 10 分钟
 var MAX_BATCH_IMAGE_FILES = 200;
@@ -113,6 +116,17 @@ var _batchFinish = null;
 //   - 大小超过 VIDEO_MAX_MB → 拒绝（避免无效上传）
 //   - 时长超过 VIDEO_MAX_SECONDS → 拒绝
 //   - 读不出元数据（损坏/特殊编码）→ 放行，交由服务端校验
+function fileExtOf(name){
+  var m = /\.([A-Za-z0-9]+)$/.exec(name || '');
+  return m ? m[1].toLowerCase() : '';
+}
+function checkExt(f, list, kindLabel){
+  var ext = fileExtOf(f && f.name);
+  if(ext && list.indexOf(ext) >= 0) return null;
+  return '「' + (f && f.name || '文件') + '」格式不支持，' + kindLabel + '仅支持 ' +
+    list.map(function(x){ return '.' + x; }).join(' / ');
+}
+
 function precheckVideoFile(f){
   return new Promise(function(resolve){
     if(f.size > VIDEO_MAX_MB * 1024 * 1024){
@@ -287,6 +301,12 @@ function syncNavGroupOpen(view){
   });
 }
 
+// 侧栏版本号统一用 APP_VERSION 渲染（D-45）：避免「侧栏 v1.0 / 查询串 20261025 / APP_VERSION 20261029」三套号
+function renderSideVersion(){
+  var el = document.getElementById('side-version');
+  if(el) el.textContent = 'YOLO Console · ' + APP_VERSION;
+}
+
 function updateChromeUser(){
   if(!state.currentUser) return;
   var name = state.currentUser.username;
@@ -295,6 +315,12 @@ function updateChromeUser(){
     e.textContent = state.currentUser.role === 'admin' ? '管理员' : '普通用户';
   });
   document.querySelectorAll('.avatar').forEach(function(e){ e.textContent = (name||'A').charAt(0).toUpperCase(); });
+  // 顶栏用户名与首字头像（D-46 / D-30）：与侧栏、个人中心共用「用户名首字」，不再一处头像一处 @
+  var _av = (name || 'A').charAt(0).toUpperCase();
+  document.querySelectorAll('.topbar-avatar').forEach(function(e){ e.textContent = _av; });
+  document.querySelectorAll('.topbar-name').forEach(function(e){ e.textContent = name || '—'; });
+  // 个人中心大头像也统一成首字（D-30）：原来这里写死一个「@」，跟侧栏圆形头像对不上
+  document.querySelectorAll('#profile-avatar').forEach(function(e){ e.textContent = _av; });
   var meta = state.currentUser.created_at
     ? '创建时间：' + (state.currentUser.created_at || '').slice(0, 10)
     : '';
@@ -423,15 +449,8 @@ function loadExtModules(){
         '<div class="ext-poster-enter">进入模块 →</div>' +
         '</div></div>';
     });
-    cards += '<div class="ext-poster-card ext-placeholder">' +
-      '<div class="ext-poster-bg"></div>' +
-      '<div class="ext-poster-icon" style="opacity:0.4;"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/></svg></div>' +
-      '<div class="ext-poster-tag" style="background:rgba(255,255,255,0.1);color:var(--text-3);">开发中</div>' +
-      '<div class="ext-poster-info">' +
-      '<div class="ext-poster-title" style="color:var(--text-3);">更多功能</div>' +
-      '<div class="ext-poster-desc" style="color:var(--text-3);">敬请期待，新模块持续开发中...</div>' +
-      '<div class="ext-poster-enter" style="color:var(--text-3);opacity:0.5;">即将上线</div>' +
-      '</div></div>';
+    // 不再追加「更多功能 / 开发中」占位卡（D-47）：海报墙只列真实已上线的模块，
+    // 占位卡既点不动，也让人以为还有隐藏功能没开放。
     grid.innerHTML = cards;
   });
 }
@@ -544,7 +563,7 @@ function switchLoginTab(mode){
 }
 function sendBarkCode(){
   var phone = document.getElementById('code-phone').value.trim();
-  if(!/^1\d{10}$/.test(phone)){ toast('请输入正确的 11 位手机号'); return; }
+  if(!/^1\d{10}$/.test(phone)){ toast('请输入正确的 11 位手机号', 'warning'); return; }
   api('/api/send-bark-code', {method:'POST', body: JSON.stringify({phone:phone})})
     .then(function(res){
       if(res.data.ok){
@@ -568,15 +587,15 @@ function sendBarkCode(){
           }
         }, 1000);
       } else {
-        toast(res.data.msg || '发送失败');
+        toast(res.data.msg || '发送失败', 'error');
       }
-    }).catch(function(){ toast('网络错误'); });
+    }).catch(function(){ toast('网络错误', 'error'); });
 }
 function doLoginWithCode(){
   var phone = document.getElementById('code-phone').value.trim();
   var code = document.getElementById('bark-login-code').value.trim();
-  if(!/^1\d{10}$/.test(phone)){ toast('请输入正确的 11 位手机号'); return; }
-  if(!/^\d{6}$/.test(code)){ toast('请输入 6 位数字验证码'); return; }
+  if(!/^1\d{10}$/.test(phone)){ toast('请输入正确的 11 位手机号', 'warning'); return; }
+  if(!/^\d{6}$/.test(code)){ toast('请输入 6 位数字验证码', 'warning'); return; }
   api('/api/login-with-code', {method:'POST', body: JSON.stringify({phone:phone, code:code})})
     .then(function(res){
       if(res.data.ok){
@@ -586,15 +605,44 @@ function doLoginWithCode(){
         go('dash');
         if(typeof resumePendingDeep === 'function') resumePendingDeep();
       } else {
-        toast(res.data.msg || '登录失败');
+        toast(res.data.msg || '登录失败', 'error');
       }
-    }).catch(function(){ toast('网络错误'); });
+    }).catch(function(){ toast('网络错误', 'error'); });
 }
+// ===== 记住用户名（D-40）=====
+// 只存手机号这一个字符串，密码绝不落 localStorage；取消勾选立即清掉。
+var REMEMBER_NAME_KEY = 'yolo_remember_name';
+function saveRememberName(){
+  try{
+    var cb = document.getElementById('remember-name');
+    var inp = document.getElementById('username');
+    if(cb && cb.checked && inp && inp.value.trim()){
+      localStorage.setItem(REMEMBER_NAME_KEY, inp.value.trim());
+    } else {
+      localStorage.removeItem(REMEMBER_NAME_KEY);
+    }
+  }catch(e){}
+}
+// 勾选框变化时立刻落盘（勾上时输入框可能还是空的，真正的保存交给 doLogin 再兜一次）
+function rememberLoginName(){ saveRememberName(); }
+function restoreLoginName(){
+  try{
+    var saved = localStorage.getItem(REMEMBER_NAME_KEY);
+    if(!saved) return;
+    var inp = document.getElementById('username');
+    if(inp && !inp.value){ inp.value = saved; }
+    var cb = document.getElementById('remember-name');
+    if(cb){ cb.checked = true; }
+  }catch(e){}
+}
+document.addEventListener('DOMContentLoaded', restoreLoginName);
+
 function doLogin(){
   var u=document.getElementById('username').value.trim();
   var p=document.getElementById('password').value;
-  if(!u||!p){ toast('请输入手机号和密码'); return; }
-  if(!/^1\d{10}$/.test(u)){ toast('请输入正确的 11 位手机号'); return; }
+  if(!u||!p){ toast('请输入手机号和密码', 'warning'); return; }
+  if(!/^1\d{10}$/.test(u)){ toast('请输入正确的 11 位手机号', 'warning'); return; }
+  saveRememberName();
   api('/api/login', {method:'POST', body: JSON.stringify({phone:u, password:p})})
     .then(function(res){
       if(res.data.ok){
@@ -604,9 +652,9 @@ function doLogin(){
         go('dash');
         if(typeof resumePendingDeep === 'function') resumePendingDeep();
       } else {
-        toast(res.data.msg || '登录失败');
+        toast(res.data.msg || '登录失败', 'error');
       }
-    }).catch(function(){ toast('网络错误，请检查网络连接'); });
+    }).catch(function(){ toast('网络错误，请检查网络连接', 'error'); });
 }
 function doRegister(){
   var u=document.getElementById('reg-username').value.trim();
@@ -615,10 +663,10 @@ function doRegister(){
   var p2=document.getElementById('reg-password2').value;
   var c=document.getElementById('captcha-register').value.trim();
   if(!ph||!p||!p2){ toast('请完整填写注册信息'); return; }
-  if(!/^1\d{10}$/.test(ph)){ toast('请输入正确的 11 位手机号'); return; }
+  if(!/^1\d{10}$/.test(ph)){ toast('请输入正确的 11 位手机号', 'warning'); return; }
   if(p.length<6){ toast('密码至少 6 位'); return; }
   if(p!==p2){ toast('两次输入的密码不一致'); return; }
-  if(!c){ toast('请输入验证码'); return; }
+  if(!c){ toast('请输入验证码', 'warning'); return; }
   api('/api/register', {method:'POST', body: JSON.stringify({username:u, phone:ph, password:p, captcha_id:_captchaIds.register, captcha_code:c})})
     .then(function(res){
       if(res.data.ok){
@@ -628,11 +676,11 @@ function doRegister(){
         go('dash');
         if(typeof resumePendingDeep === 'function') resumePendingDeep();
       } else {
-        toast(res.data.msg || '注册失败');
+        toast(res.data.msg || '注册失败', 'error');
         loadCaptcha('register');
         document.getElementById('captcha-register').value='';
       }
-    }).catch(function(){ toast('网络错误，请检查网络连接'); });
+    }).catch(function(){ toast('网络错误，请检查网络连接', 'error'); });
 }
 function logout(){
   confirmDialog('退出登录','确定要退出当前账号吗？', function(){
@@ -648,13 +696,24 @@ function pickImage(){ document.getElementById('detect-file').click(); }
 function onImagePicked(input){
   var f = input.files[0];
   if(!f) return;
-  // 单张图片独立上限（与后端 P0-4 一致），前置拦截避免无效上传
-  if(f.size > IMG_MAX_MB * 1024 * 1024){
-    toast('图片过大，单张不能超过 '+IMG_MAX_MB+' MB');
+  var badExt = checkExt(f, IMG_EXT_OK, '图片');
+  if(badExt){
+    toast(badExt, 'error');
     input.value = '';
     state.selectedImageFile = null;
     document.getElementById('image-dropzone-text').innerHTML = '拖拽图片到这里，或 <span class="hl">点击选择文件</span>';
     setImageFileHint(null);
+    refreshDetectEnabled();
+    return;
+  }
+  // 单张图片独立上限（与后端 P0-4 一致），前置拦截避免无效上传
+  if(f.size > IMG_MAX_MB * 1024 * 1024){
+    toast('图片过大，单张不能超过 '+IMG_MAX_MB+' MB', 'error');
+    input.value = '';
+    state.selectedImageFile = null;
+    document.getElementById('image-dropzone-text').innerHTML = '拖拽图片到这里，或 <span class="hl">点击选择文件</span>';
+    setImageFileHint(null);
+    refreshDetectEnabled();
     return;
   }
   state.selectedImageFile = f;
@@ -662,17 +721,42 @@ function onImagePicked(input){
   document.getElementById('image-dropzone-text').innerHTML =
     '已选择：<span class="hl">'+f.name+'</span>（'+(f.size/1024).toFixed(0)+' KB）';
   setImageFileHint(f);
+  refreshDetectEnabled();
 }
 
 // 单张图片面板的「尚未选择文件」提示区（与批量模式风格一致）
+var _imgPrevUrl = null;
 function setImageFileHint(f){
   var el = document.getElementById('image-file-hint');
   if(!el) return;
-  el.innerHTML = f
-    ? '<div class="file-item"><span class="fname">'+f.name+'</span><span class="fsize">'+(f.size/1024).toFixed(0)+' KB</span></div>'
-    : '<div style="color:var(--text-2);font-size:13px;padding:8px 0">尚未选择文件</div>';
+  // 换图/清空时释放上一张的 objectURL，避免内存泄漏
+  if(_imgPrevUrl){ try{ URL.revokeObjectURL(_imgPrevUrl); }catch(e){} _imgPrevUrl = null; }
+  if(!f){
+    el.innerHTML = '<div style="color:var(--text-2);font-size:13px;padding:8px 0">尚未选择文件</div>';
+    return;
+  }
+  var thumb = '';
+  try{
+    _imgPrevUrl = URL.createObjectURL(f);
+    thumb = '<img class="file-thumb" src="'+_imgPrevUrl+'" alt="" onerror="this.style.display=\'none\'">';
+  }catch(e){}
+  el.innerHTML =
+    '<div class="file-item file-item-thumb">'+thumb+
+      '<span class="fname">'+escHtml(f.name)+'</span>'+
+      '<span class="fsize">'+(f.size/1024).toFixed(0)+' KB</span></div>';
+}
+
+// 极简 HTML 转义：文件名来自用户磁盘，拼 innerHTML 前必须转义（D-13 起新增渲染点）
+function escHtml(v){
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 // ===== 重置结果区（开始新检测前调用，避免上次残留） =====
+function showArchiveTag(on){
+  var tag = document.querySelector('#detect-result .archive-tag');
+  if(tag) tag.style.display = on ? 'inline-flex' : 'none';
+}
 function resetResult(){
   state.videoResultActive = false;   // 停掉视频结果页的逐帧画框循环
   document.getElementById('detect-empty').style.display='none';
@@ -683,12 +767,20 @@ function resetResult(){
   // 清空摘要与计数
   var h4 = document.querySelector('#detect-result .summary-card h4');
   if(h4) h4.textContent = '检测中...';
+  // 「已自动归档」只在真有 record_id 时显示（D-01/D-12）
+  showArchiveTag(false);
+  var dlw = document.getElementById('detect-download-wrap');
+  if(dlw){ dlw.style.display='none'; dlw.innerHTML=''; }
+  var sw = document.getElementById('detect-stats-wrap');
+  if(sw) sw.innerHTML='';
   // 清空原图/结果图
   var imgs = document.querySelectorAll('#detect-result .result-imgs img');
-  imgs.forEach(function(im){ im.src = ''; });
+  imgs.forEach(function(im){ im.removeAttribute('src'); });
   // 清空视频
   var v = document.getElementById('result-video');
-  if(v){ v.removeAttribute('src'); v.load(); }
+  if(v){ v.removeAttribute('src'); try{ v.load(); }catch(e){} }
+  var vc = document.getElementById('video-box-canvas');
+  if(vc) vc.style.display='none';
   // 清空明细表
   var tbody = document.querySelector('#detect-result table.data tbody');
   if(tbody) tbody.innerHTML='';
@@ -698,31 +790,97 @@ function resetResult(){
   vizReset();   // 图表回到空态（等本次结果）
 }
 
+// ===== 失败/中止后的界面复位（C3）=====
+// 只清「结果区与进行中状态」，不动用户已选的文件 —— 失败后可以直接点重试。
+// 成功/失败/中止三条路径都必须走这里，否则会留下「检测中…」、破图、幽灵归档标签。
+function resetDetectUI(){
+  state.videoResultActive = false;
+  var empty = document.getElementById('detect-empty');
+  var res = document.getElementById('detect-result');
+  if(empty) empty.style.display = 'flex';
+  if(res) res.style.display = 'none';
+  var vr = document.getElementById('video-result');
+  if(vr) vr.style.display = 'none';
+  var bn = document.getElementById('batch-nav');
+  if(bn) bn.style.display = 'none';
+  var note = document.getElementById('tbl-note');
+  if(note) note.style.display = 'none';
+  var h4 = document.querySelector('#detect-result .summary-card h4');
+  if(h4) h4.textContent = '检测完成，结果已自动归档';
+  showArchiveTag(false);
+  var dlw = document.getElementById('detect-download-wrap');
+  if(dlw){ dlw.style.display='none'; dlw.innerHTML=''; }
+  var sw = document.getElementById('detect-stats-wrap');
+  if(sw) sw.innerHTML='';
+  var imgs = document.querySelectorAll('#detect-result .result-imgs img');
+  imgs.forEach(function(im){ im.removeAttribute('src'); });
+  var cv = document.getElementById('detect-result-box-canvas');
+  if(cv){ var g = cv.getContext('2d'); if(g) g.clearRect(0,0,cv.width,cv.height); }
+  var v = document.getElementById('result-video');
+  if(v){ v.removeAttribute('src'); try{ v.load(); }catch(e){} }
+  var vc = document.getElementById('video-box-canvas');
+  if(vc) vc.style.display='none';
+  var tbody = document.querySelector('#detect-result table.data tbody');
+  if(tbody) tbody.innerHTML='';
+  state._dvReady = false;
+  syncDetectVisual();
+  vizReset();
+  setDetectBusy(false);
+}
+
+// ===== 检测按钮忙碌态（D-14）=====
+var _detectBtnIds = ['detect-btn','video-detect-btn','batch-image-btn','batch-video-btn'];
+function setDetectBusy(on){
+  _detectBtnIds.forEach(function(id){
+    var b = document.getElementById(id);
+    if(!b) return;
+    b.disabled = !!on;
+    b.classList.toggle('is-busy', !!on);
+  });
+  refreshDetectEnabled();
+}
+// 无文件时置灰「开始检测」，避免点了才弹提示
+function refreshDetectEnabled(){
+  var pairs = [
+    ['detect-btn', state.selectedImageFile],
+    ['video-detect-btn', state.selectedVideoFile],
+    ['batch-image-btn', state.batchImageFiles && state.batchImageFiles.length],
+    ['batch-video-btn', state.batchVideoFiles && state.batchVideoFiles.length]
+  ];
+  pairs.forEach(function(p){
+    var b = document.getElementById(p[0]);
+    if(!b || b.classList.contains('is-busy')) return;
+    b.disabled = !p[1];
+  });
+}
+
 function runDetect(){
-  if(!state.selectedImageFile){ toast('请先选择一张图片'); return; }
+  if(!state.selectedImageFile){ toast('请先选择一张图片', 'warning'); return; }
   var fd = new FormData();
   fd.append('file', state.selectedImageFile);
   fd.append('conf', readConfValue('image-conf-value'));
   showLoading('正在推理，请稍候...', 60);
   setLoadProgress(0, 0, '正在推理…首次推理需加载模型，请耐心等待');   // 不确定动画：防误以为卡死
   resetResult();
+  setDetectBusy(true);
   var ac = startTask('图片推理');
-  fetch(API + '/api/detect/image', {method:'POST', body: fd, credentials:'same-origin',
+  withTimeout(fetch(API + '/api/detect/image', {method:'POST', body: fd, credentials:'same-origin',
         signal: ac.signal})
-    .then(function(r){ return r.json(); })
+    .then(function(r){ return r.json(); }), 30000, '图片检测', null)
     .then(function(d){
       endTask(); hideLoading();
       if(state.taskAborted) return;      // 已终止：abortTask 里提示过了
-      if(!d.ok){ toast(d.msg || '检测失败'); return; }
+      if(!d.ok){ setDetectBusy(false); resetDetectUI(); toast(d.msg || '检测失败', 'error'); return; }
       renderImageResult(d);
       vizSetData({mode:'image', boxes:d.boxes, stats:d.stats,
                   name: state.selectedImageName || '', items:null, frames:null});
+      setDetectBusy(false);
       toast('检测完成，耗时 '+d.duration_ms+' ms');
-    })
-    .catch(function(e){
+    }, function(e){
       endTask(); hideLoading();
       if(state.taskAborted) return;
-      toast('检测请求失败：'+e.message);
+      resetDetectUI();
+      toast(humanError(e), 'error');
     });
 }
 // 明细表上方的说明文字：四种模式统一显示（noteId 可指定目标元素，默认检测页 tbl-note，供历史详情抽屉复用）
@@ -942,9 +1100,18 @@ function renderVideoResult(d){
 function renderDetectDownloadBtn(recordId){
   var wrap = document.getElementById('detect-download-wrap');
   if(!wrap) return;
+  // 「已自动归档」由状态驱动：只有真的写进历史记录（有 record_id）才显示（D-01 / D-12）
+  showArchiveTag(!!recordId);
   if(!recordId){ wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
-  wrap.style.display = 'block';
-  // 「点下载时才现场把框绘制进图片/视频」属实现说明，只留代码注释不进页面
+  // D-16：按钮贴到结果卡片里 —— 图片挂到第二张图的 figure 内，视频挂到视频容器内，
+  // 以前它挂在两张图下方单独一行，看起来像另一个功能条。
+  var isVideo = (document.getElementById('video-result') || {}).style.display === 'block';
+  var host = isVideo
+    ? document.getElementById('video-result')
+    : document.querySelectorAll('#detect-result .result-imgs figure')[1];
+  if(host && wrap.parentNode !== host) host.appendChild(wrap);
+  wrap.className = 'dl-inline';
+  wrap.style.display = 'flex';
   wrap.innerHTML = '<button class="btn btn-ghost btn-sm" onclick="downloadMarked(' + recordId + ', this)">' +
     '下载标注文件</button>';
 }
@@ -962,7 +1129,7 @@ function renderDetectDownloadBtn(recordId){
 // 吞掉/缓冲（fetch 永远收不到第一个字节，页面卡死在"准备中"），而普通 JSON 请求全部
 // 正常 —— 因此只依赖已被验证可靠的 JSON 通道（启动/轮询/取消全用 GET + JSON）。
 // 另：版本自检（APP_VERSION 与 /api/version 不符则自动硬刷新），彻底杜绝“一直跑旧 JS”。
-var APP_VERSION = "20261029a1";
+var APP_VERSION = "20261124a2";
 var _dlBusy = false;        // 本页是否正在下载（即时防连点）
 var _dlWatch = null;        // 超时看门狗定时器
 var _dlCancelled = false;   // 是否为用户主动取消
@@ -1016,7 +1183,8 @@ window.addEventListener('beforeunload', _dlReleaseOnUnload);
   }
   check();
   document.addEventListener('visibilitychange', function(){ if(!document.hidden) check(); });
-  setInterval(check, 60000);              // 后端更新后，哪怕页面一直开着也能自动跟上
+  // 定期复检并入下方 5s 心跳（P-1）：同一个 /api/version 没必要两个定时器轮着打，
+  // 心跳成功后顺手比对版本，后端更新最多 5s 就能让页面自动跟上。
 })();
 
 // —— 后端心跳（反向探活）：后端挂了前端不能一直干挂着 ——
@@ -1049,6 +1217,14 @@ function _hbBeat(){
       if(!r.ok) throw new Error('status ' + r.status);
       _hbFails = 0;
       if(_hbDown){ _hbDown = false; _hbBanner(false); toast('后端连接已恢复', 'success'); }
+      // 心跳顺带做版本比对（P-1）
+      return r.json().catch(function(){ return null; });
+    })
+    .then(function(d){
+      if(d && d.version && d.version !== APP_VERSION){
+        console.warn('[hb] 前端版本过期 (%s → %s)，自动刷新', APP_VERSION, d.version);
+        location.reload(true);
+      }
     })
     .catch(function(){
       if(timer) clearTimeout(timer);
@@ -1287,6 +1463,15 @@ function videoSkipToggle(prefix){
 function onVideoPicked(input){
   var f=input.files[0];
   if(!f) return;
+  var bad = checkExt(f, VIDEO_EXT_OK, '视频');
+  if(bad){
+    toast(bad, 'error');
+    input.value='';
+    state.selectedVideoFile=null;
+    setVideoFileHint(null);
+    refreshDetectEnabled();
+    return;
+  }
   // P1-4：选择时预检大小 + 时长，超限不发起上传（服务端仍会兜底校验）
   precheckVideoFile(f).then(function(res){
     if(!res.ok){
@@ -1296,12 +1481,14 @@ function onVideoPicked(input){
       document.getElementById('video-dropzone-text').innerHTML =
         '拖拽视频到这里，或 <span class="hl">点击选择文件</span>';
       setVideoFileHint(null);
+      refreshDetectEnabled();
       return;
     }
     state.selectedVideoFile=f;
     document.getElementById('video-dropzone-text').innerHTML =
       '已选择：<span class="hl">'+f.name+'</span>（'+(f.size/1024/1024).toFixed(1)+' MB）';
     setVideoFileHint(f);
+    refreshDetectEnabled();
   });
 }
 
@@ -1314,10 +1501,10 @@ function setVideoFileHint(f){
     : '<div style="color:var(--text-2);font-size:13px;padding:8px 0">尚未选择视频</div>';
 }
 function runVideoDetect(){
-  if(!state.selectedVideoFile){ toast('请先选择一个视频'); return; }
+  if(!state.selectedVideoFile){ toast('请先选择一个视频', 'warning'); return; }
   // P1-5：读取抽帧/置信度（仅本次请求生效，不影响他人、不持久化）
   var sc = readSkipConf('video-skip-enabled', 'video-skip-value', 'video-conf-value');
-  if(!sc.ok){ toast(sc.msg); return; }
+  if(!sc.ok){ toast(sc.msg, 'warning'); return; }
   var fd=new FormData();
   fd.append('file', state.selectedVideoFile);
   fd.append('skip', sc.skip);
@@ -1325,6 +1512,7 @@ function runVideoDetect(){
   showLoading('视频逐帧推理中，时长较长请耐心等待...', 900);
   setLoadProgress(0, 0, '准备推理…首次推理需加载模型');   // 首条帧进度到达前走不确定动画
   resetResult();
+  setDetectBusy(true);
   // 流式接口：先收进度行，最后收结果行（老接口 /api/detect/video 保留为同步 JSON）
   var ac = startTask('视频推理：' + state.selectedVideoFile.name);
   fetch(API + '/api/detect/video/stream', {method:'POST', body: fd, credentials:'same-origin',
@@ -1364,7 +1552,7 @@ function runVideoDetect(){
     .then(function(d){
       endTask(); hideLoading();
       if(state.taskAborted) return;      // 已终止
-      if(!d.ok){ toast(d.msg || '视频检测失败'); return; }
+      if(!d.ok){ setDetectBusy(false); resetDetectUI(); toast(d.msg || '视频检测失败', 'error'); return; }
       document.getElementById('detect-empty').style.display='none';
       document.getElementById('detect-result').style.display='block';
       document.querySelector('#detect-result .result-imgs').style.display='none';
@@ -1392,12 +1580,14 @@ function runVideoDetect(){
       // 结果就绪：点亮左侧模式占位图
       state._dvReady = true;
       syncDetectVisual();
+      setDetectBusy(false);
       toast('视频检测完成，耗时 '+Math.round(d.duration_ms/1000)+' 秒');
     })
     .catch(function(e){
       endTask(); hideLoading();
       if(state.taskAborted) return;
-      toast('视频请求失败：'+e.message);
+      resetDetectUI();
+      toast(humanError(e), 'error');
     });
 }
 
@@ -1406,6 +1596,17 @@ state.batchImageFiles = [];
 function onBatchImagesPicked(input){
   var files = Array.from(input.files);
   if(!files.length) return;
+  // 扩展名先筛一遍（拖拽可绕过 accept）
+  var imgBad = [];
+  files = files.filter(function(f){
+    var bad = checkExt(f, IMG_EXT_OK, '图片');
+    if(bad){ imgBad.push(f.name); return false; }
+    return true;
+  });
+  if(imgBad.length){
+    toast('已剔除 '+imgBad.length+' 个格式不支持的图片（仅支持 '+IMG_EXT_OK.map(function(x){return '.'+x;}).join(' / ')+'）', 'warning');
+  }
+  if(!files.length){ input.value=''; return; }
   // P1-1/P1-2：数量 + 总大小 软限制（前端拦截，服务端仍会兜底）
   if(files.length > MAX_BATCH_IMAGE_FILES){
     toast('批量图片最多 '+MAX_BATCH_IMAGE_FILES+' 张，已选 '+files.length+' 张，请精简后重试');
@@ -1414,11 +1615,12 @@ function onBatchImagesPicked(input){
   }
   var totalMB = files.reduce(function(s,f){ return s + f.size; }, 0) / 1024 / 1024;
   if(totalMB > MAX_BATCH_IMAGE_TOTAL_MB){
-    toast('批量图片总大小不能超过 '+MAX_BATCH_IMAGE_TOTAL_MB+' MB（'+(MAX_BATCH_IMAGE_TOTAL_MB/1024).toFixed(0)+' GB），当前约 '+totalMB.toFixed(0)+' MB');
+    toast('批量图片总大小不能超过 '+MAX_BATCH_IMAGE_TOTAL_MB+' MB（'+(MAX_BATCH_IMAGE_TOTAL_MB/1024).toFixed(0)+' GB），当前约 '+totalMB.toFixed(0)+' MB', 'error');
     input.value='';
     return;
   }
   state.batchImageFiles = files;
+  refreshDetectEnabled();
   var list = document.getElementById('batch-image-list');
   document.getElementById('batch-image-text').innerHTML =
     '已选择 <span class="hl">'+state.batchImageFiles.length+'</span> 张图片';
@@ -1431,9 +1633,10 @@ function onBatchImagesPicked(input){
   });
 }
 function runBatchImage(){
-  if(!state.batchImageFiles.length){ toast('请先选择图片'); return; }
+  if(!state.batchImageFiles.length){ toast('请先选择图片', 'warning'); return; }
   // 逐张调用单图接口（复用已有的 /api/detect/image），这样能实时显示"第几张 / 共几张"
   resetResult();
+  setDetectBusy(true);
   var files = state.batchImageFiles;
   var total = files.length, idx = 0, okCount = 0, failCount = 0;
   var cancelled = false;   // 后端返回「已取消」= 中途断开，已被中止并清理，不算失败
@@ -1455,9 +1658,11 @@ function runBatchImage(){
     _batchAbort = null;
     _batchFinish = null;
     hideLoading();
+    setDetectBusy(false);
     var secs = ((Date.now()-t0)/1000).toFixed(1);
     toast('批量'+(cancelled?'已取消':'完成')+'：成功 '+okCount+' / 共 '+total+' 张'
-          +(failCount?('，失败 '+failCount+' 张'):''));
+          +(failCount?('，失败 '+failCount+' 张'):''),
+          (cancelled||failCount)?'warning':'success');
     state.batchItems = okItems;
     state.batchIdx = 0;
     if(okItems.length){
@@ -1470,6 +1675,9 @@ function runBatchImage(){
       // 结果就绪：点亮左侧模式占位图
       state._dvReady = true;
       syncDetectVisual();
+    }else{
+      // 全部失败/全部取消：右侧回到空态，不能留着「检测中...」（D-01）
+      resetDetectUI();
     }
     // P2-3：弹出汇总（成功/失败/耗时 + 跳转历史）
     openBatchSummary({kind:'image', total:total, ok:okCount, fail:failCount, secs:secs});
@@ -1601,10 +1809,21 @@ function onBatchVideosPicked(input){
   }
   var totalMB = files.reduce(function(s,f){ return s + f.size; }, 0) / 1024 / 1024;
   if(totalMB > MAX_BATCH_VIDEO_TOTAL_MB){
-    toast('批量视频总大小不能超过 '+MAX_BATCH_VIDEO_TOTAL_MB+' MB（'+(MAX_BATCH_VIDEO_TOTAL_MB/1024).toFixed(0)+' GB），当前约 '+totalMB.toFixed(0)+' MB');
+    toast('批量视频总大小不能超过 '+MAX_BATCH_VIDEO_TOTAL_MB+' MB（'+(MAX_BATCH_VIDEO_TOTAL_MB/1024).toFixed(0)+' GB），当前约 '+totalMB.toFixed(0)+' MB', 'error');
     input.value='';
     return;
   }
+  // D-20：先按扩展名筛一遍，再不支持的格式连解码都不试，避免误报「时长过长」
+  var extBad = [];
+  files = files.filter(function(f){
+    var bad = checkExt(f, VIDEO_EXT_OK, '视频');
+    if(bad){ extBad.push(f.name); return false; }
+    return true;
+  });
+  if(extBad.length){
+    toast('已剔除 '+extBad.length+' 个格式不支持的视频（仅支持 '+VIDEO_EXT_OK.map(function(x){return '.'+x;}).join(' / ')+'）', 'warning');
+  }
+  if(!files.length){ input.value=''; return; }
   // P1-4：按大小/时长预检，剔除超限视频（服务端仍会兜底校验）
   Promise.all(files.map(precheckVideoFile)).then(function(results){
     var okFiles = [], bad = [];
@@ -1617,6 +1836,7 @@ function onBatchVideosPicked(input){
     }
     if(!okFiles.length){ input.value=''; return; }
     state.batchVideoFiles = okFiles;
+    refreshDetectEnabled();
     var queue = document.getElementById('batch-video-queue');
     document.getElementById('batch-video-text').innerHTML =
       '已选择 <span class="hl">'+state.batchVideoFiles.length+'</span> 个视频';
@@ -1631,7 +1851,7 @@ function onBatchVideosPicked(input){
   });
 }
 function runBatchVideo(){
-  if(!state.batchVideoFiles.length){ toast('请先选择视频'); return; }
+  if(!state.batchVideoFiles.length){ toast('请先选择视频', 'warning'); return; }
   // P1-5：读取抽帧/置信度（仅本次批次生效，该批次内每个视频用同一设置）
   var sc = readSkipConf('bv-skip-enabled', 'bv-skip-value', 'bv-conf-value');
   if(!sc.ok){ toast(sc.msg); return; }
@@ -1649,7 +1869,7 @@ function runBatchVideo(){
       var freeMB = res.data.free_mb || 0;
       var needMB = totalBytes * 2 / 1024 / 1024;
       if(needMB > freeMB){
-        toast('磁盘剩余空间不足：预计需要约 '+needMB.toFixed(0)+' MB，当前仅剩 '+freeMB.toFixed(0)+' MB，已取消批量');
+        toast('磁盘剩余空间不足：预计需要约 '+needMB.toFixed(0)+' MB，当前仅剩 '+freeMB.toFixed(0)+' MB，已取消批量', 'error');
         return;
       }
     }
@@ -1660,6 +1880,7 @@ function runBatchVideo(){
     // P1-3：本次批量任务的 AbortController，支持中途取消（同时注册进全局任务控制）
     state.batchAborted = false;
     resetResult();   // 开始新批量：清掉右侧上次残留，显示“检测中...”
+    setDetectBusy(true);
     startTask('批量视频（'+bvTotal+' 个）');
     showCancelBtn(true, cancelCurrentBatch);
     showLoading('准备处理第 1 / '+bvTotal+' 个视频...', 1800);
@@ -1673,9 +1894,11 @@ function runBatchVideo(){
     _batchAbort = null;
     _batchFinish = null;
     hideLoading();
+    setDetectBusy(false);
     var secs = ((Date.now()-t0)/1000).toFixed(1);
     toast('批量视频'+(cancelled?'已取消':'全部完成')+'：成功 '+okCount+' / 共 '+bvTotal+' 个'
-          +(failCount?('，失败 '+failCount+' 个'):''));
+          +(failCount?('，失败 '+failCount+' 个'):''),
+          (cancelled||failCount)?'warning':'success');
     // P2-3：弹出汇总（成功/失败/耗时 + 跳转历史），不再自动跳历史
     // BUG修复：批量视频此前没有右侧内联结果区（右侧始终空状态）。
     // 现与批量图片对齐：成功项进右侧「检测结果」区（原始视频+逐帧框+明细表），
@@ -1689,8 +1912,11 @@ function runBatchVideo(){
       renderBatchItem();
       // 结果就绪：点亮左侧模式占位图
       state._dvReady = true;
+      syncDetectVisual();
+    }else{
+      // 全部失败/全部取消：右侧回到空态（D-01）
+      resetDetectUI();
     }
-    syncDetectVisual();   // 收尾同步（全失败/全取消时收起占位图）
     openBatchSummary({kind:'video', total:bvTotal, ok:okCount, fail:failCount, secs:secs});
   }
   _batchFinish = finishBatch;
@@ -2270,7 +2496,11 @@ function _vizOptBatch(){
     backgroundColor:'transparent',
     tooltip:{trigger:'axis', axisPointer:{type:'shadow'},
       backgroundColor:'rgba(18,22,30,.95)', borderColor:line, textStyle:{color:c2, fontSize:12}},
-    legend:{data:clsList, top:0, right:0, itemWidth:12, itemHeight:8,
+    // 图例色块显式绑定与柱体同一套颜色（D-18）：只给 series 设 itemStyle.color 时，
+    // ECharts 的图例会退回调色板自动配色，于是「图例是蓝的、柱子是绿的」。
+    legend:{data:clsList.map(function(cn){
+        return {name:cn, itemStyle:{color:_catColor(cn, clsMap[cn])}};
+      }), top:0, right:0, itemWidth:12, itemHeight:8,
       textStyle:{color:c2, fontSize:11}},
     grid:{left:6, right:16, top:24 + rows * 20, bottom:46, containLabel:true},
     // x 轴标题居中排在轴下方（原来 nameLocation:'end' 挂在轴末端向右伸出被裁掉）
@@ -2281,8 +2511,10 @@ function _vizOptBatch(){
     yAxis:{type:'category', data:names, inverse:true, axisTick:{show:false},
       axisLine:{lineStyle:{color:line}}, axisLabel:{color:c2, fontSize:11}},
     series:clsList.map(function(cn, i){
+      var cCol = _catColor(cn, clsMap[cn]);
       return {name:cn, type:'bar', stack:'total', barWidth:'58%',
-        itemStyle:{color:_catColor(cn, clsMap[cn])},
+        color:cCol,
+        itemStyle:{color:cCol},
         data:items.map(function(it){ return (it.stats && it.stats[cn]) || 0; })};
     })
   };
@@ -2611,6 +2843,7 @@ function clearDetect(){
   state.batchVideoFiles = [];
   state.batchItems = [];
   state.batchIdx = 0;
+  refreshDetectEnabled();
   // 重置文件选择控件
   var f1 = document.getElementById('detect-file'); if(f1) f1.value='';
   var f2 = document.getElementById('detect-video-file'); if(f2) f2.value='';
@@ -2736,7 +2969,7 @@ function startWebcam(){
     })
     .catch(function(err){
       console.error(err);
-      toast('无法访问摄像头：' + (err.message || '权限被拒绝'));
+      toast('无法访问摄像头：' + mediaError(err), 'error');
     });
 }
 
@@ -2928,7 +3161,7 @@ function setStreamLiveBadge(live){
 }
 function startStream(){
   var url = (document.getElementById('stream-url').value || '').trim();
-  if(!url){ toast('请输入视频流地址'); return; }
+  if(!url){ toast('请输入视频流地址', 'warning'); return; }
   var img = document.getElementById('stream-img');
   document.getElementById('stream-placeholder').style.display = 'none';
   document.getElementById('stream-frame').classList.add('live');
@@ -2947,12 +3180,22 @@ function startStream(){
   var db=document.getElementById('stream-stop-btn'); if(db) db.style.display='';
   var sw=document.getElementById('stream-stats'); if(sw){ sw.style.display='block'; sw.innerHTML=''; }
   showLoading('正在连接视频流并启动推理...');
-  img.onload = function(){ hideLoading(); };
-  img.onerror = function(){
+  state.streamFails = 0;
+  img.onload = function(){
+    if(state.streamConnTimer){ clearTimeout(state.streamConnTimer); state.streamConnTimer = null; }
+    state.streamFails = 0;
     hideLoading();
-    if(!state.streamActive) return;
-    toast('视频流连接失败，请检查地址或网络');
   };
+  img.onerror = function(){
+    streamFail('视频流连接失败，请检查地址或网络');
+  };
+  // D-02：连接超时兜底 —— 地址不通时 img 可能既不 onload 也不 onerror，
+  // 没有这一层，遮罩会一直盖着、两个轮询定时器也会永远空转。
+  if(state.streamConnTimer) clearTimeout(state.streamConnTimer);
+  state.streamConnTimer = setTimeout(function(){
+    state.streamConnTimer = null;
+    if(state.streamActive) streamFail('视频流连接超时（20 秒未收到画面），请检查地址或网络');
+  }, 20000);
   // 同源 img 自动带登录 cookie；sid 用于取回结构化统计
   img.src = API + '/api/detect/stream?url=' + encodeURIComponent(url) + '&sid=' + state.streamSid
     + '&conf=' + encodeURIComponent(readConfValue('stream-conf-value'));
@@ -2968,8 +3211,10 @@ function pollStreamStats(){
   fetch(API + '/api/detect/stream/stats?sid=' + state.streamSid, {credentials:'same-origin'})
     .then(function(r){return r.json();})
     .then(function(d){
+      state.streamFails = 0;
       if(d && d.error){
-        if(!state.streamErrShown){ state.streamErrShown = true; toast(d.error); }
+        // 后端已报错（地址不通/解码失败等）：停流并复位，不能只弹一次提示就继续轮询
+        streamFail(d.error);
         return;
       }
       if(d && d.ended){
@@ -2983,7 +3228,23 @@ function pollStreamStats(){
         renderStreamStats(d.stats, d.total, d.duration_ms);
       }
     })
-    .catch(function(){});
+    .catch(function(){
+      // 单次抖动忽略，连续 3 次（约 1.5 秒）取不到统计就认定链路已断
+      state.streamFails = (state.streamFails || 0) + 1;
+      if(state.streamFails >= 3) streamFail('与后端的连接已中断，已停止拉流');
+    });
+}
+
+// 流失败/超时的统一收尾：关遮罩、停两个轮询、复位徽标与占位文案，提示只弹一次
+function streamFail(msg){
+  if(!state.streamActive) return;
+  var text = msg || '视频流连接失败，请检查地址或网络';
+  hideLoading();
+  stopStream(true);
+  var ph = document.getElementById('stream-placeholder');
+  if(ph){ ph.style.display = ''; ph.textContent = text; }
+  if(!state.streamErrShown){ state.streamErrShown = true; toast(text, 'error'); }
+  state.streamFails = 0;
 }
 function renderStreamStats(stats, total, ms, ended, d){
   var sw = document.getElementById('stream-stats');
@@ -3168,6 +3429,7 @@ function stopStream(silent){
   }
   state.streamSid = null;
   state.streamClsMap = {};   // 清掉上一轮流的类别映射，避免串台到新一轮
+  if(state.streamConnTimer){ clearTimeout(state.streamConnTimer); state.streamConnTimer = null; }
   if(state.streamTimer){ clearInterval(state.streamTimer); state.streamTimer = null; }
   if(state.streamBoxTimer){ clearInterval(state.streamBoxTimer); state.streamBoxTimer = null; }
   boxAnimStop('stream', null);   // 停掉框平滑动画并清掉叠加的检测框
@@ -3194,22 +3456,25 @@ function stopStream(silent){
 // ===== 模型管理 =====
 function loadModels(){
   api('/api/models').then(function(res){
-    if(!res.data.ok){ toast(res.data.msg||'加载模型失败'); return; }
+    if(!res.data.ok){ toast(res.data.msg||'加载模型失败', 'error'); return; }
     state.models = res.data.models;
     renderModels();
   });
 }
 function refreshModelsMeta(){
-  showLoading('正在重新读取所有模型元信息，请稍候...', 600);
+  // 只用模型区的局部遮罩（P-7）：刷新元信息可能要等好几秒，
+  // 全屏遮罩会把整个控制台锁住，用户连切页面都不行；这里只盖住模型网格。
+  var host = document.getElementById('model-grid');
+  sectionLoading(host, true);
   api('/api/models/refresh-meta', {method:'POST'})
     .then(function(res){
-      hideLoading();
-      if(!res.data.ok){ toast(res.data.msg||'刷新失败'); return; }
+      sectionLoading(host, false);
+      if(!res.data.ok){ toast(res.data.msg||'刷新失败', 'error'); return; }
       var f = (res.data.failed||[]);
-      toast('已更新 '+res.data.updated+' 个模型元信息'+(f.length?('，失败 '+f.length+' 个'):''));
+      toast('已更新 '+res.data.updated+' 个模型元信息'+(f.length?('，失败 '+f.length+' 个'):''), f.length ? 'warning' : 'success');
       loadModels();
     })
-    .catch(function(e){ hideLoading(); toast('刷新请求失败：'+e.message); });
+    .catch(function(e){ sectionLoading(host, false); toast('刷新请求失败：'+humanError(e), 'error'); });
 }
 function renderModels(){
   var MODELS = state.models;
@@ -3290,8 +3555,8 @@ function useModel(id){
       .then(function(res){
         hideLoading();
         if(res.data.ok){ toast('已切换到 '+m.name); loadModels(); loadCurrentModelBar(); }
-        else toast(res.data.msg||'切换失败');
-      }).catch(function(){ hideLoading(); toast('切换失败'); });
+        else toast(res.data.msg||'切换失败', 'error');
+      }).catch(function(){ hideLoading(); toast('切换失败', 'error'); });
   });
 }
 function unloadModel(id){
@@ -3301,7 +3566,7 @@ function unloadModel(id){
     api('/api/models/'+m.file_name+'/unload', {method:'POST'})
       .then(function(res){
         if(res.data.ok){ toast('已卸载 '+m.name); loadModels(); }
-        else toast(res.data.msg||'卸载失败');
+        else toast(res.data.msg||'卸载失败', 'error');
       });
   });
 }
@@ -3311,7 +3576,7 @@ function unloadAllModels(){
     api('/api/models/unload-all', {method:'POST'})
       .then(function(res){
         if(res.data.ok){ toast('已卸载 '+res.data.unloaded+' 个模型'); loadModels(); }
-        else toast(res.data.msg||'卸载失败');
+        else toast(res.data.msg||'卸载失败', 'error');
       });
   });
 }
@@ -3322,7 +3587,7 @@ function deleteModel(id){
   confirmDialog('删除模型','确定要删除 '+m.name+' 吗？', function(){
     api('/api/models/'+id, {method:'DELETE'}).then(function(res){
       if(res.data.ok){ toast('模型已删除'); loadModels(); }
-      else toast(res.data.msg||'删除失败');
+      else toast(res.data.msg||'删除失败', 'error');
     });
   });
 }
@@ -3330,7 +3595,7 @@ function openModelModal(){ document.getElementById('model-modal').classList.add(
 function uploadModel(){
   var fileInput = document.querySelector('#model-modal input[type=file]');
   var f = fileInput && fileInput.files[0];
-  if(!f){ toast('请选择模型文件'); return; }
+  if(!f){ toast('请选择模型文件', 'warning'); return; }
   var nameInput = document.querySelector('#model-modal input[placeholder^="例如"]');
   var tagInput = document.getElementById('model-tags');
   var noteArea = document.querySelector('#model-modal textarea');
@@ -3344,12 +3609,13 @@ function uploadModel(){
     .then(function(r){ return r.json(); })
     .then(function(d){
       if(d.ok){ closeModal('model-modal'); toast('模型上传成功'); loadModels(); }
-      else toast(d.msg||'上传失败');
+      else toast(d.msg||'上传失败', 'error');
     });
 }
 
 // ===== 历史 =====
 function loadHistory(){
+  loadHistoryClasses();
   // 普通用户只能看自己的记录，隐藏用户筛选下拉框
   var filterItem = document.getElementById('history-user-filter');
   if(filterItem){
@@ -3378,12 +3644,72 @@ function loadHistory(){
   var u = (sel||{value:'all'}).value || 'all';
   var kw = state.historyKw || '';
   var page = state.historyPage || 1;
-  var limit = state.historyLimit || 20;  api('/api/history?user='+encodeURIComponent(u)+'&kw='+encodeURIComponent(kw)+'&page='+page+'&limit='+limit).then(function(res){
+  var limit = state.historyLimit || 20;
+  // 日期 / 类别筛选（D-24）+ 排序（D-25）：全部走查询串，后端只认白名单字段
+  var df = (document.getElementById('history-date-from') || {}).value || '';
+  var dt = (document.getElementById('history-date-to') || {}).value || '';
+  var cls = (document.getElementById('history-cls-filter') || {}).value || 'all';
+  var sort = state.historySort || 'time';
+  var order = state.historyOrder || 'desc';
+  var qs = '/api/history?user=' + encodeURIComponent(u) +
+           '&kw=' + encodeURIComponent(kw) +
+           '&page=' + page + '&limit=' + limit +
+           '&sort=' + encodeURIComponent(sort) + '&order=' + encodeURIComponent(order);
+  if(df) qs += '&date_from=' + encodeURIComponent(df);
+  if(dt) qs += '&date_to=' + encodeURIComponent(dt);
+  if(cls && cls !== 'all') qs += '&cls=' + encodeURIComponent(cls);
+  api(qs).then(function(res){
     if(!res.data.ok){ if(res.status===401){ go('login'); } return; }
     state.records = res.data.records || [];
     state.historyTotal = res.data.total || 0;
     state.historyPage = res.data.page || 1;
     renderHistory();
+    renderHistorySortArrows();
+  });
+}
+// 日期 / 类别变化：回到第一页重查
+function historyExtraFilterChange(){
+  state.historyPage = 1;
+  loadHistory();
+}
+// 表头排序：同一列再点一次切换升降序
+function historySortBy(key){
+  if(state.historySort === key){
+    state.historyOrder = (state.historyOrder === 'asc') ? 'desc' : 'asc';
+  } else {
+    state.historySort = key;
+    // 时间默认新→旧，数量默认多→少，名称默认 A→Z
+    state.historyOrder = (key === 'name') ? 'asc' : 'desc';
+  }
+  state.historyPage = 1;
+  loadHistory();
+}
+// 表头箭头跟着当前排序走
+function renderHistorySortArrows(){
+  var cur = state.historySort || 'time';
+  var ord = state.historyOrder || 'desc';
+  document.querySelectorAll('#view-history th.th-sort').forEach(function(th){
+    var on = th.getAttribute('data-sort-key') === cur;
+    th.classList.toggle('on', on);
+    var ar = th.querySelector('.sort-ar');
+    if(ar) ar.textContent = on ? (ord === 'asc' ? '↑' : '↓') : '↕';
+  });
+}
+// 类别下拉：取历史里出现过的类别（最近 500 条汇总）
+function loadHistoryClasses(){
+  var sel = document.getElementById('history-cls-filter');
+  if(!sel || sel.dataset.loaded === '1') return;
+  api('/api/history/classes').then(function(res){
+    if(!res.data || !res.data.ok) return;
+    var cur = sel.value;
+    sel.innerHTML = '<option value="all">全部类别</option>';
+    (res.data.classes || []).forEach(function(c){
+      var o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      sel.appendChild(o);
+    });
+    sel.dataset.loaded = '1';
+    if(cur) sel.value = cur;
   });
 }
 function historySearch(){
@@ -3405,11 +3731,26 @@ function renderHistoryPager(){
   if(!pager) return;
   var total = state.historyTotal || 0, page = state.historyPage || 1, limit = state.historyLimit || 20;
   var pages = Math.max(1, Math.ceil(total / limit));
-  if(total === 0){ pager.innerHTML = '共 0 条'; return; }
+  if(total === 0){ pager.innerHTML = ''; pager.style.display = 'none'; return; }
+  pager.style.display = '';
   pager.innerHTML =
     '<button class="pg-btn"'+(page<=1?' disabled':'')+' onclick="historyGoPage('+(page-1)+')">上一页</button>'+
     '<span class="pg-info">第 '+page+' / '+pages+' 页 · 共 '+total+' 条</span>'+
     '<button class="pg-btn"'+(page>=pages?' disabled':'')+' onclick="historyGoPage('+(page+1)+')">下一页</button>';
+}
+
+// 单条删除后同步计数与分页（D-03）：
+// 不重新拉整页（省一次请求），但「共 N 条」和上一页/下一页必须跟着变；
+// 如果删完当前页空了，自动回上一页重新加载，避免停在空白页。
+function syncHistoryCount(delta){
+  state.historyTotal = Math.max(0, (state.historyTotal || 0) + delta);
+  var remain = (state.records || []).length;
+  if(remain <= 0 && (state.historyPage || 1) > 1){
+    state.historyPage = state.historyPage - 1;
+    loadHistory();
+    return;
+  }
+  renderHistoryPager();
 }
 
 // 编辑模式（勾选批量删除）
@@ -3423,6 +3764,8 @@ function toggleEditMode(){
   state.historyEditing = !state.historyEditing;
   document.getElementById('btn-edit-history').textContent = state.historyEditing ? '完成' : '编辑';
   document.getElementById('btn-batch-del').style.display = state.historyEditing ? 'inline-block' : 'none';
+  var _sep = document.getElementById('toolbar-sep');
+  if(_sep) _sep.style.display = state.historyEditing ? 'inline-block' : 'none';
   if(!state.historyEditing) state.historyCheckedIds = {};
   renderHistory();
 }
@@ -3448,6 +3791,24 @@ function renderHistory(){
           '<span class="op-del" onclick="delRow(this,'+r.id+')">删除</span></td>';
     tbody.appendChild(tr);
   });
+  // 空态：不再只显示「共 0 条」一行灰字（D-26）
+  if(!recs.length){
+    var _dF = (document.getElementById('history-date-from') || {}).value || '';
+    var _dT = (document.getElementById('history-date-to') || {}).value || '';
+    var _clsF = (document.getElementById('history-cls-filter') || {}).value || 'all';
+    var filtered = !!(state.historyKw) ||
+      ((document.getElementById('history-user-filter') || {}).value || 'all') !== 'all' ||
+      !!_dF || !!_dT || (_clsF !== 'all');
+    var td = document.createElement('td');
+    td.colSpan = 7;
+    td.style.padding = '0';
+    td.appendChild(filtered
+      ? emptyState('search', '没有符合条件的记录，换个关键字或重置筛选试试', '重置筛选', resetHistoryFilter)
+      : emptyState('box', '还没有检测记录，先去做一次检测吧', '去检测', function(){ go('detect'); }));
+    var trE = document.createElement('tr');
+    trE.appendChild(td);
+    tbody.appendChild(trE);
+  }
   renderHistoryPager();
   syncHistoryCheckAll();
   updateHistoryDelBtn();
@@ -3514,7 +3875,16 @@ function resetHistoryFilter(){
   if(s) s.value = 'all';
   var q = document.getElementById('history-search');
   if(q) q.value = '';
+  // 日期 / 类别 / 排序一并回到默认，否则「重置」只清一半，用户会以为还有隐藏条件（D-24 / D-25）
+  var df = document.getElementById('history-date-from');
+  if(df) df.value = '';
+  var dt = document.getElementById('history-date-to');
+  if(dt) dt.value = '';
+  var cs = document.getElementById('history-cls-filter');
+  if(cs) cs.value = 'all';
   state.historyKw = '';
+  state.historySort = 'time';
+  state.historyOrder = 'desc';
   state.historyPage = 1;
   loadHistory();
   toast('筛选已重置');
@@ -3535,7 +3905,7 @@ function cleanupOrphanFiles(){
         .then(function(res){
           hideLoading();
           var d = res.data || {};
-          if(!d.ok){ toast(d.msg || '扫描失败'); return; }
+          if(!d.ok){ toast(d.msg || '扫描失败', 'error'); return; }
           if(!d.deleted){
             toast('没有发现孤儿文件，磁盘是干净的');
             return;
@@ -3549,18 +3919,18 @@ function cleanupOrphanFiles(){
                 .then(function(r2){
                   hideLoading();
                   var r = r2.data || {};
-                  if(!r.ok){ toast(r.msg || '清理失败'); return; }
+                  if(!r.ok){ toast(r.msg || '清理失败', 'error'); return; }
                   if(r.msg){ toast(r.msg); }
                   else if(r.failed){
-                    toast('清理完成：成功 ' + r.deleted + ' 个，失败 ' + r.failed + ' 个。');
+                    toast('清理完成：成功 ' + r.deleted + ' 个，失败 ' + r.failed + ' 个。', 'warning');
                   } else {
                     toast('已清理 ' + r.deleted + ' 个孤儿文件，释放 ' + _fmtSize(r.freed_bytes));
                   }
                 })
-                .catch(function(e){ hideLoading(); toast('清理失败：' + (e && e.message ? e.message : '网络错误')); });
+                .catch(function(e){ hideLoading(); toast('清理失败：' + humanError(e), 'error'); });
             });
         })
-        .catch(function(e){ hideLoading(); toast('扫描失败：' + (e && e.message ? e.message : '网络错误')); });
+        .catch(function(e){ hideLoading(); toast('扫描失败：' + humanError(e), 'error'); });
     });
 }
 
@@ -3585,7 +3955,7 @@ function _delWithRetry(path, opts, onOk, failMsg, verify){
           if(typeof verify === 'function'){
             verify(function(alreadyDeleted){
               if(alreadyDeleted){ if(onOk) onOk({status:200, data:{ok:true, verified:true}}); }
-              else { toast(failMsg + '（' + ((err2 && err2.message) || '网络错误') + '）'); }
+              else { toast(failMsg + '（' + humanError(err2) + '）', 'error'); }
               hideLoading();
             });
             return;
@@ -3613,7 +3983,7 @@ function verifyHistoryDeleted(ids, done){
 function deleteSelected(){
   var ids = getCheckedIds();
   ids = ids.filter(function(x){ return !isNaN(x) && x > 0; });   // 过滤异常 id，避免后端 int() 报错
-  if(!ids.length){ toast('请先勾选要删除的记录'); return; }
+  if(!ids.length){ toast('请先勾选要删除的记录', 'warning'); return; }
   confirmDialog('删除所选记录','确定要删除选中的 '+ids.length+' 条记录吗？删除后不可恢复。', function(){
     showLoading('正在删除所选 '+ids.length+' 条记录...', 30);
     _delWithRetry('/api/history/batch-delete',
@@ -3637,10 +4007,10 @@ function clearAllHistory(){
     api('/api/history/clear', {method:'POST'})
       .then(function(res){
         if(res.data.ok){ toast('已清空 '+res.data.deleted+' 条记录'); state.historyPage = 1; loadHistory(); }
-        else { toast(res.data.msg||'清空失败'); }
+        else { toast(res.data.msg||'清空失败', 'error'); }
         hideLoading();
       })
-      .catch(function(){ toast('网络错误，清空失败'); hideLoading(); });
+      .catch(function(){ toast('网络错误，清空失败', 'error'); hideLoading(); });
   });
 }
 
@@ -3752,7 +4122,7 @@ function indLoadArmConfig(){
 
 function indOpenClassPicker(){
   var all = _ind.modelClasses || [];
-  if(!all.length){ toast('请先开启摄像头加载模型'); return; }
+  if(!all.length){ toast('请先开启摄像头加载模型', 'warning'); return; }
   var selected = (_ind.selectedClasses || []).slice();
   // 构建弹窗
   var overlay = document.createElement('div');
@@ -3889,10 +4259,10 @@ function indOpenClassPicker(){
             _finish();
           }
         } else {
-          toast(res.msg || '保存失败');
+          toast(res.msg || '保存失败', 'error');
         }
       })
-      .catch(function(){ toast('网络错误'); });
+      .catch(function(){ toast('网络错误', 'error'); });
   };
   overlay.onclick = function(e){ if(e.target === overlay) closeDlg(); };
   btnRow.appendChild(cancelBtn);
@@ -4040,8 +4410,8 @@ function indOnClassMapChange(cls, areaKey){
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({class_area_map: _ind.classMap})
   }).then(function(r){return r.json();}).then(function(res){
-    if(!res.ok) toast(res.msg || '保存失败');
-  }).catch(function(){ toast('保存失败'); });
+    if(!res.ok) toast(res.msg || '保存失败', 'error');
+  }).catch(function(){ toast('保存失败', 'error'); });
 }
 
 function indAddArea(){
@@ -4061,8 +4431,8 @@ function indAddArea(){
       indRenderPoseBtns();
       indUpdatePoseBtns();
       toast('已添加放置位：' + name + '，请去标定');
-    } else toast(res.msg || '添加失败');
-  }).catch(function(){ hideLoading(); toast('添加失败'); });
+    } else toast(res.msg || '添加失败', 'error');
+  }).catch(function(){ hideLoading(); toast('添加失败', 'error'); });
   });
 }
 
@@ -4081,10 +4451,10 @@ function indClearPoses(){
           indUpdatePoseBtns();
           toast(res.msg);
         } else {
-          toast(res.msg || '清空失败');
+          toast(res.msg || '清空失败', 'error');
         }
       })
-      .catch(function(){ hideLoading(); toast('网络错误'); });
+      .catch(function(){ hideLoading(); toast('网络错误', 'error'); });
   });
 }
 
@@ -4123,9 +4493,9 @@ function indRenameArea(key){
         indLoadSortRecords();
         toast('已重命名为「' + name + '」');
       } else {
-        toast(res.msg || '重命名失败');
+        toast(res.msg || '重命名失败', 'error');
       }
-    }).catch(function(){ toast('请求失败'); });
+    }).catch(function(){ toast('请求失败', 'error'); });
   }, area.label || area.key);
 }
 
@@ -4150,9 +4520,9 @@ function indRemoveArea(key){
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({areas: newAreas, class_area_map: _ind.classMap})
   }).then(function(r){return r.json();}).then(function(res){
-    if(!res.ok) toast(res.msg || '删除失败');
+    if(!res.ok) toast(res.msg || '删除失败', 'error');
     else toast('已删除放置位：' + (area.label||area.key));
-  }).catch(function(){ toast('删除失败'); });
+  }).catch(function(){ toast('删除失败', 'error'); });
   });
 }
 
@@ -4174,12 +4544,12 @@ function indRefreshPorts(){
       opt.textContent = '未检测到串口';
       sel.appendChild(opt);
     }
-  }).catch(function(){ toast('串口扫描失败'); });
+  }).catch(function(){ toast('串口扫描失败', 'error'); });
 }
 
 function indConnectArm(){
   var port = document.getElementById('arm-port-select').value;
-  if(!port){ toast('请选择串口号'); return; }
+  if(!port){ toast('请选择串口号', 'warning'); return; }
   showLoading('正在连接机械臂...', 20);
   fetch('/api/arm/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({port:port})})
     .then(function(r){return r.json();})
@@ -4206,10 +4576,10 @@ function indConnectArm(){
           _ind.lastPort = port;
         }
       } else {
-        toast(res.msg||'连接失败');
+        toast(res.msg||'连接失败', 'error');
       }
     })
-    .catch(function(){ hideLoading(); toast('连接请求失败'); });
+    .catch(function(){ hideLoading(); toast('连接请求失败', 'error'); });
 }
 
 function indDisconnectArm(){
@@ -4223,7 +4593,7 @@ function indDisconnectArm(){
       indStopStatusPoll();
       indUpdateUI();
       indUpdatePoseBtns();
-    }).catch(function(){ hideLoading(); toast('断开失败'); });
+    }).catch(function(){ hideLoading(); toast('断开失败', 'error'); });
   });
 }
 
@@ -4419,7 +4789,7 @@ function indResetJoints(){
     body:JSON.stringify({servos:{0:1500,1:1500,2:1500,3:1500,4:1500}, duration:800})
   }).then(function(r){return r.json();}).then(function(res){
     toast(res.msg || '所有关节已重置到中位');
-  }).catch(function(){ toast('重置失败'); });
+  }).catch(function(){ toast('重置失败', 'error'); });
 }
 
 function indRenderJoints(){
@@ -4506,9 +4876,9 @@ function indPump(action){
         }
         indUpdateUI();
       }
-      else { toast(res.msg||'操作失败'); }
+      else { toast(res.msg||'操作失败', 'error'); }
     })
-    .catch(function(){ hideLoading(); toast('请求失败'); });
+    .catch(function(){ hideLoading(); toast('请求失败', 'error'); });
 }
 
 function indRenderPumpCountdown(){
@@ -4571,9 +4941,9 @@ function indSetMoveSpeed(profile){
         indRenderMoveSpeed();
         var names = {slow:'「慢」', normal:'「标准」', fast:'「快」'};
         toast(res.msg || ('动作速度已设为' + (names[profile] || profile)));
-      } else { toast(res.msg || '设置失败'); }
+      } else { toast(res.msg || '设置失败', 'error'); }
     })
-    .catch(function(){ toast('请求失败'); });
+    .catch(function(){ toast('请求失败', 'error'); });
 }
 
 function indRenderMoveSpeed(){
@@ -4601,9 +4971,9 @@ function indSetViaHome(enabled){
         _ind.viaHome = !!res.via_home;
         indRenderViaHome();
         toast(res.msg || ('已设为' + (_ind.viaHome ? '「经原点」' : '「直达」')));
-      } else { toast(res.msg || '设置失败'); }
+      } else { toast(res.msg || '设置失败', 'error'); }
     })
-    .catch(function(){ toast('请求失败'); });
+    .catch(function(){ toast('请求失败', 'error'); });
 }
 
 // ===== 从硬件回读真实关节位置，驱动滑块跟随 =====
@@ -4720,9 +5090,9 @@ function indSavePose(name){
       .then(function(res){
         hideLoading();
         if(res.ok){ toast(res.msg); indFetchStatus(); }
-        else { toast(res.msg||'保存失败'); }
+        else { toast(res.msg||'保存失败', 'error'); }
       })
-      .catch(function(){ hideLoading(); toast('请求失败'); });
+      .catch(function(){ hideLoading(); toast('请求失败', 'error'); });
   });
 }
 
@@ -4756,9 +5126,9 @@ function indGotoPose(name){
           }
         }
       }
-      else { toast(res.msg||'移动失败'); _ind.busy=false; indUpdateUI(); indUpdatePoseBtns(); }
+      else { toast(res.msg||'移动失败', 'error'); _ind.busy=false; indUpdateUI(); indUpdatePoseBtns(); }
     })
-    .catch(function(){ hideLoading(); _ind.busy=false; indUpdateUI(); indUpdatePoseBtns(); toast('请求失败'); });
+    .catch(function(){ hideLoading(); _ind.busy=false; indUpdateUI(); indUpdatePoseBtns(); toast('请求失败', 'error'); });
 }
 
 function indEStop(){
@@ -4898,7 +5268,7 @@ function indOnFilePicked(input){
 }
 
 function indStartFile(){
-  if(!_ind.fileURL){ toast('请先点击「选择视频文件…」选择要回放的视频'); return; }
+  if(!_ind.fileURL){ toast('请先点击「选择视频文件…」选择要回放的视频', 'warning'); return; }
   if(_ind.cameraOn) indStopCamera(true);
   var video = document.getElementById('ind-cam-video');
   if(!video){ toast('画面组件缺失'); return; }
@@ -4915,7 +5285,7 @@ function indStartFile(){
     indUpdateResText(640, _ind.frameH);
   };
   video.onerror = function(){
-    toast('该视频无法在浏览器中解码（建议改用 MP4/H.264 格式）');
+    toast('该视频无法在浏览器中解码（建议改用 MP4/H.264 格式）', 'error');
     indStopCamera(true);
   };
   video.play().then(function(){
@@ -4924,20 +5294,20 @@ function indStartFile(){
   }).catch(function(err){
     // 连续换视频时，旧播放请求会被新加载打断（AbortError）——这是正常流程，不该报错
     if(err && err.name === 'AbortError') return;
-    toast('无法播放视频：' + (err.message || '浏览器阻止了自动播放'));
+    toast('无法播放视频：' + mediaError(err), 'error');
   });
 }
 
 // --- 源③：网络流 IP摄像头（后端中继 MJPEG，前端照常抓帧推理） ---
 function indStartNetStream(){
   var url = ((document.getElementById('ind-stream-url')||{}).value || '').trim();
-  if(!url){ toast('请先填写流地址或本地视频文件路径'); return; }
+  if(!url){ toast('请先填写流地址或本地视频文件路径', 'warning'); return; }
   if(_ind.cameraOn) indStopCamera(true);
   showLoading('正在连接网络流…', 100);
   api('/api/ind/stream/open', {method:'POST', body: JSON.stringify({url: url})})
     .then(function(res){
       hideLoading();
-      if(!res.data.ok){ toast(res.data.msg || '连接失败'); return; }
+      if(!res.data.ok){ toast(res.data.msg || '连接失败', 'error'); return; }
       var live = document.getElementById('ind-cam-live');
       live.onerror = function(){
         live.style.display = 'none';
@@ -4973,7 +5343,7 @@ function indStartNetStream(){
       }, 2000);
       toast('网络流已连接，可点「开启推理」');
     })
-    .catch(function(){ hideLoading(); toast('连接请求失败'); });
+    .catch(function(){ hideLoading(); toast('连接请求失败', 'error'); });
 }
 
 // --- 源④：屏幕/窗口捕获（演示投屏；需 localhost/HTTPS 安全环境） ---
@@ -5014,7 +5384,7 @@ function indStartScreen(){
     })
     .catch(function(err){
       if(err && err.name === 'NotAllowedError'){ toast('已取消屏幕选择'); return; }
-      toast('屏幕捕获失败：' + ((err && err.message) || err));
+      toast('屏幕捕获失败：' + mediaError(err), 'error');
     });
 }
 
@@ -5101,7 +5471,7 @@ function indOnCamDeviceChange(){
         toast('已切换摄像头');
       })
       .catch(function(err){
-        toast('切换失败：' + (err.message || '无法访问'));
+        toast('切换失败：' + mediaError(err), 'error');
         // 完整清理画面，恢复占位状态
         if(_ind.webcamTimer){ clearInterval(_ind.webcamTimer); _ind.webcamTimer = null; }
         if(_ind.webcamStream){ _ind.webcamStream.getTracks().forEach(function(t){t.stop();}); _ind.webcamStream = null; }
@@ -5178,7 +5548,7 @@ function indStartCamera(){
     })
     .catch(function(err){
       console.error(err);
-      toast('无法访问摄像头：' + (err.message || '权限被拒绝'));
+      toast('无法访问摄像头：' + mediaError(err), 'error');
     });
 }
 
@@ -5235,7 +5605,7 @@ function indStopCamera(silent){
 // 离开页面时清除模型定时器（go() 中会调用 indStopCamera(true)）
 
 function indStartInfer(){
-  if(!_ind.cameraOn){ toast('请先开启摄像头'); return; }
+  if(!_ind.cameraOn){ toast('请先开启摄像头', 'warning'); return; }
   // 先预热模型：首帧推理要"读盘 + 载入显存 + CUDA 初始化"，可能卡好几秒且毫无反馈。
   // 这里把它挪到有「正在加载模型」提示的阶段，加载完再开始逐帧推理。
   showLoading('正在加载模型…', 60);
@@ -5243,7 +5613,7 @@ function indStartInfer(){
     .then(function(r){ return r.json(); })
     .then(function(res){
       hideLoading();
-      if(!res.ok){ toast(res.msg || '模型加载失败，无法开启推理'); return; }
+      if(!res.ok){ toast(res.msg || '模型加载失败，无法开启推理', 'error'); return; }
       _ind.inferOn = true;
       indUpdateCamUI();
       // 停止预览 interval，改为链式触发（推理完立即下一帧）
@@ -5254,7 +5624,7 @@ function indStartInfer(){
     })
     .catch(function(){
       hideLoading();
-      toast('模型预热请求失败');
+      toast('模型预热请求失败', 'error');
     });
 }
 
@@ -6235,7 +6605,7 @@ function trRenderModeDesc(){
 // 打开规则弹窗：按当前已选类别渲染表格 + 初始化模式草稿 + 回填调优参数
 function openTriggerRules(){
   var sel = _ind.selectedClasses || [];
-  if(!sel.length){ toast('请先在上方「类别选择」中勾选类别'); return; }
+  if(!sel.length){ toast('请先在上方「类别选择」中勾选类别', 'warning'); return; }
   // 弹窗草稿：模式切换只改草稿，与表格/仲裁统一——保存才生效
   _ind._trDraft = { mode: (_ind.triggerMode === 'advanced') ? 'advanced' : 'basic' };
   indRefreshTriggerRules();
@@ -6313,7 +6683,7 @@ function trFollowOf(tr){
 // 跟随类别选择浮层：可多选「模型支持的全部类别」（含未选中的），排除自身
 function openFollowPicker(cls){
   var all = _ind.modelClasses || [];
-  if(!all.length){ toast('请先开启摄像头加载模型'); return; }
+  if(!all.length){ toast('请先开启摄像头加载模型', 'warning'); return; }
   var rowBtn = document.querySelector('.tr-follow-btn[data-cls="'+cls+'"]');
   var draft = [];
   if(rowBtn){
@@ -6793,10 +7163,10 @@ function indSorterStart(){
         indStartSorterPoll();
         toast(res.msg || '自动分拣已启动');
       } else {
-        toast(res.msg || '启动失败');
+        toast(res.msg || '启动失败', 'error');
       }
     })
-    .catch(function(){ hideLoading(); toast('启动请求失败'); });
+    .catch(function(){ hideLoading(); toast('启动请求失败', 'error'); });
 }
 
 function indSorterStop(){
@@ -6810,7 +7180,7 @@ function indSorterStop(){
       indSyncStatusPoll();     // 停用机械臂 → 状态轮询降回心跳
       toast(res.msg || '已请求停止');
     })
-    .catch(function(){ toast('停止请求失败'); });
+    .catch(function(){ toast('停止请求失败', 'error'); });
 }
 
 function indEStopSorter(){
@@ -6847,7 +7217,7 @@ function indResetSorter(){
       indUpdateSorterBtn();
       toast(res.msg || '已复位');
     })
-    .catch(function(){ hideLoading(); toast('复位请求失败'); });
+    .catch(function(){ hideLoading(); toast('复位请求失败', 'error'); });
 }
 
 // ===== 分拣记录与统计 =====
@@ -7109,13 +7479,13 @@ function indSelectAllRecords(){
 
 function indDeleteSortRecordsBatch(){
   var ids = Object.keys(_ind._recChecked || {}).map(Number);
-  if(!ids.length){ toast('请先勾选要删除的记录'); return; }
+  if(!ids.length){ toast('请先勾选要删除的记录', 'warning'); return; }
   confirmDialog('批量删除', '确定删除选中的 <b>' + ids.length + '</b> 条分拣记录吗？<br>删除后「今日分拣统计」的计数会同步减少。', function(){
     fetch('/api/sorter/records', {
       method:'DELETE', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ids: ids})
     }).then(function(r){ return r.json(); }).then(function(res){
-      if(!res.ok){ toast(res.msg || '批量删除失败'); return; }
+      if(!res.ok){ toast(res.msg || '批量删除失败', 'error'); return; }
       toast('已删除 ' + ids.length + ' 条记录');
       _ind._recChecked = {};
       indLoadSortRecords();      // 刷新记录列表
@@ -7123,7 +7493,7 @@ function indDeleteSortRecordsBatch(){
     }).catch(function(err){
       // 删除可能已经生效，先核实一次再报错，避免"其实删了却显示失败"
       var purged = Object.keys(_ind._recChecked || {}).map(Number);
-      toast('删除失败（' + ((err && err.message) || '网络错误') + '）');
+      toast('删除失败（' + humanError(err) + '）', 'error');
       console.error('[删除分拣记录失败]', err, purged);
       indLoadSortRecords();
     });
@@ -7135,12 +7505,12 @@ function indDeleteSortRecord(rid){
     fetch('/api/sorter/records/' + rid, {method:'DELETE'})
       .then(function(r){ return r.json(); })
       .then(function(res){
-        if(!res.ok){ toast(res.msg || '删除失败'); return; }
+        if(!res.ok){ toast(res.msg || '删除失败', 'error'); return; }
         toast('已删除');
         indLoadSortRecords();      // 刷新记录列表
         indLoadSortStats();        // 刷新今日计分统计
       })
-      .catch(function(){ toast('请求失败'); });
+      .catch(function(){ toast('请求失败', 'error'); });
   });
 }
 
@@ -7252,7 +7622,7 @@ function indStartPageHeartbeat(){
       .then(function(r){
         if(r.status === 403){
           indStopPageHeartbeat();
-          toast('您的模块访问权限已被撤销');
+          toast('您的模块访问权限已被撤销', 'error');
           go('dash');
           return null;
         }
@@ -7586,6 +7956,9 @@ function delRow(btn, rid){
         if(btn.closest('tr')) btn.closest('tr').remove();
         // 单行删除后同样要把该 id 从勾选集里踢掉，避免残留计数
         if(state.historyCheckedIds) delete state.historyCheckedIds[rid];
+        // 同步内存里的本页数据与总数，否则「共 N 条」/翻页按钮还是旧值（D-03）
+        state.records = (state.records || []).filter(function(r){ return String(r.id) !== String(rid); });
+        syncHistoryCount(-1);
         syncHistoryCheckAll();
         updateHistoryDelBtn();
         toast('记录已删除');
@@ -7595,22 +7968,128 @@ function delRow(btn, rid){
 }
 
 // ===== Toast =====
+// 三态：success（默认，绿+勾）/ error（红+叉）/ warning（橙+感叹）。
+// 以前只改文字颜色、底色永远是绿色对勾，报错也像成功 —— 现在底色、图标、文字一起换。
 var toastTimer=null;
-function toast(msg, type){
+var _TOAST_ICON = {
+  success: '<path d="M20 6L9 17l-5-5"/>',
+  error:   '<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>',
+  warning: '<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>'
+};
+function toast(msg, type, ms){
   var t=document.getElementById('toast');
+  if(!t) return;
   var txt=document.getElementById('toast-text');
-  txt.textContent=msg;
-  // 类型着色：success=绿，error=红，warning=橙
-  txt.style.color = '';
-  if(type==='success') txt.style.color = '#5aa96c';
-  else if(type==='error') txt.style.color = '#e57373';
-  else if(type==='warning') txt.style.color = '#e8a33d';
+  var key = (type==='error'||type==='err') ? 'error' : (type==='warning'||type==='warn') ? 'warning' : 'success';
+  if(txt){ txt.textContent=msg; txt.style.color=''; }
+  t.className = 'toast ' + (key==='error' ? 'err' : key==='warning' ? 'warn' : 'success');
+  var ic = document.getElementById('toast-icon');
+  if(ic) ic.innerHTML = _TOAST_ICON[key];
   t.style.display='flex';
   clearTimeout(toastTimer);
   toastTimer=setTimeout(function(){
     t.style.display='none';
-    txt.style.color='';
-  }, 2800);
+  }, ms || 2800);
+}
+
+// ===== 错误文案人话化（C2）=====
+// 任何面向用户的错误提示都必须过这一层，禁止把 e.message / Failed to fetch 原文抛给客户。
+function humanError(e){
+  var raw = '';
+  if(e){
+    if(typeof e === 'string') raw = e;
+    else raw = e.message || e.msg || e.error || '';
+  }
+  raw = String(raw || '').trim();
+  if(!raw) return '操作失败，请稍后重试';
+  if(/failed to fetch|networkerror|network request failed|err_network|load failed/i.test(raw))
+    return '无法连接后端，请确认服务是否在运行';
+  if(/timeout|timed out|超时/i.test(raw)) return '请求超时，请重试';
+  if(/abort/i.test(raw)) return '任务已中断，请重新发起';
+  if(/未收到处理结果/.test(raw)) return '任务已中断，请重新发起';
+  // 后端 msg 本身就是中文可读句，直接透出
+  if(/[\u4e00-\u9fa5]/.test(raw)) return raw;
+  return '操作失败，请稍后重试';
+}
+
+// 摄像头/麦克风类错误：浏览器抛的是英文枚举名，翻成用户看得懂的话
+function mediaError(err){
+  var n = (err && err.name) || '';
+  if(n === 'NotAllowedError' || n === 'SecurityError') return '权限被拒绝，请在浏览器地址栏允许访问';
+  if(n === 'NotFoundError' || n === 'DevicesNotFoundError') return '未找到可用设备';
+  if(n === 'NotReadableError' || n === 'TrackStartError') return '设备被其他程序占用';
+  if(n === 'OverconstrainedError') return '设备不支持该分辨率';
+  return humanError(err);
+}
+
+// ===== 请求超时（C4）=====
+// fetch 本身没有超时，后端挂起时界面会永远等下去。统一用 Promise.race 兜一层。
+// ctrl 传 AbortController（已有任务控制器）时，超时会同时中止请求，避免后台继续跑。
+function withTimeout(promise, ms, label, ctrl){
+  ms = ms || 30000;
+  var timer = null;
+  var boom = new Promise(function(_, reject){
+    timer = setTimeout(function(){
+      var err = new Error((label || '请求') + '超时（' + Math.round(ms/1000) + ' 秒）');
+      err.name = 'TimeoutError';
+      if(ctrl && !ctrl.signal.aborted){ try{ ctrl.abort(); }catch(e){} }
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, boom]).then(function(v){
+    clearTimeout(timer); return v;
+  }, function(err){
+    clearTimeout(timer); throw err;
+  });
+}
+
+// ===== 统一空态（C5）=====
+// 输出「图标 + 一句说明 + 可选操作按钮」，替换「共 0 条」「—」这类裸文案。
+var _EMPTY_ICONS = {
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  box: '<path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/>',
+  doc: '<path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5"/>'
+};
+function emptyState(iconName, text, actionText, actionFn){
+  var wrap = document.createElement('div');
+  wrap.className = 'empty-state';
+  var path = _EMPTY_ICONS[iconName] || _EMPTY_ICONS.box;
+  wrap.innerHTML = '<svg class="es-ico" width="34" height="34" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
+    'aria-hidden="true">' + path + '</svg><p class="es-txt"></p>';
+  wrap.querySelector('.es-txt').textContent = text || '暂无数据';
+  if(actionText && typeof actionFn === 'function'){
+    var btn = document.createElement('button');
+    btn.className = 'btn btn-ghost btn-sm';
+    btn.type = 'button';
+    btn.textContent = actionText;
+    btn.onclick = actionFn;
+    wrap.appendChild(btn);
+  }
+  return wrap;
+}
+function mountEmptyState(host, iconName, text, actionText, actionFn){
+  if(!host) return;
+  host.innerHTML = '';
+  host.appendChild(emptyState(iconName, text, actionText, actionFn));
+}
+
+// ===== 局部 loading（C6）=====
+// 刷新某个区块时不再盖全屏遮罩，只在目标容器内叠一层半透明 + 小 spinner。
+function sectionLoading(target, on){
+  var el = (typeof target === 'string') ? document.querySelector(target) : target;
+  if(!el) return;
+  var old = el.querySelector('.sec-loading');
+  if(on){
+    if(old) return;
+    if(getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    var box = document.createElement('div');
+    box.className = 'sec-loading';
+    box.innerHTML = '<span class="spinner sec-spinner"></span>';
+    el.appendChild(box);
+  }else if(old){
+    old.remove();
+  }
 }
 
 // ===== 全局加载遮罩 =====
@@ -8010,6 +8489,7 @@ api('/api/me').then(function(res){
     toast('欢迎回来，'+res.data.user.username+'！', 'success');
   }
   route();
+  renderSideVersion();
   // 深链：若启动时已登录（session 有效），route() 里的 applyDeepLink 会直接执行；
   // 若未登录，applyDeepLink 已把目标存进 _pendingDeep，等登录成功后补跳。
 }).catch(function(){
@@ -8064,12 +8544,12 @@ function renderUsers(){
     tr.innerHTML =
       '<td class="cb-col"><input type="checkbox" class="user-cb" value="'+u.id+'"'+(state.usersCheckedIds[u.id]?' checked':'')+' '+dis+' onchange="onUserCBClick('+u.id+', this.checked)"></td>'+
       '<td>'+u.username+'</td>'+
-      '<td style="font-family:monospace;color:var(--text-2)">'+(u.phone||'—')+'</td>'+
-      '<td style="font-family:monospace;color:var(--text-2)">'+(u.user_code||'—')+'</td>'+
-      '<td>'+roleText+'</td>'+
+      '<td class="hide-mobile" style="font-family:monospace;color:var(--text-2)">'+(u.phone||'—')+'</td>'+
+      '<td class="hide-mobile" style="font-family:monospace;color:var(--text-2)">'+(u.user_code||'—')+'</td>'+
+      '<td class="hide-mobile">'+roleText+'</td>'+
       '<td>'+statusBadge+'</td>'+
-      '<td>'+lastCol+'</td>'+
-      '<td>'+(u.created_at||'')+'</td>'+
+      '<td class="hide-mobile">'+lastCol+'</td>'+
+      '<td class="hide-mobile">'+(u.created_at||'')+'</td>'+
       '<td>'+(u.id===state.currentUser.id ? '<span style="color:var(--text-3)">（本人）</span>' : '<span class="op-link" onclick="openEditUserModal('+u.id+')">编辑</span>')+'</td>';
     tbody.appendChild(tr);
   });
@@ -8102,7 +8582,7 @@ function delUser(id, name){
       headers: token?{'Authorization':'Bearer '+token}:{}})
       .then(function(r){return r.json();})
       .then(function(d){
-        if(d.ok){ toast('已删除'); loadUsers(); } else toast(d.msg||'删除失败');
+        if(d.ok){ toast('已删除'); loadUsers(); } else toast(d.msg||'删除失败', 'error');
       });
   });
 }
@@ -8123,17 +8603,17 @@ function submitEditUser(){
   })})
     .then(function(res){
       if(res.data.ok){ closeModal('edit-user-modal'); toast('角色已更新'); loadUsers(); }
-      else toast(res.data.msg||'更新失败');
+      else toast(res.data.msg||'更新失败', 'error');
     });
 }
 function deleteSelectedUsers(){
   var ids = Object.keys(state.usersCheckedIds).map(function(id){return +id;});
-  if(!ids.length){ toast('请先勾选用户'); return; }
+  if(!ids.length){ toast('请先勾选用户', 'warning'); return; }
   confirmDialog('删除所选','确定要删除选中的 <b style="color:#e57373">'+ids.length+'</b> 个用户吗？', function(){
     api('/api/users/batch-delete', {method:'POST', body: JSON.stringify({ids:ids})})
       .then(function(res){
         if(res.data.ok){ toast('已删除 '+res.data.deleted+' 个用户'); state.usersCheckedIds = {}; loadUsers(); }
-        else toast(res.data.msg||'删除失败');
+        else toast(res.data.msg||'删除失败', 'error');
       });
   });
 }
@@ -8163,21 +8643,46 @@ function renderArticles(){
   var dis = state.articlesEditing ? '' : 'disabled';
   rows.forEach(function(a){
     var tr=document.createElement('tr');
-    var stText = a.status==='published' ? '已发布' : '草稿';
+    var stText, stColor;
+    if(a.status === 'published'){ stText = '已发布'; stColor = '#5aa96c'; }
+    else if(a.status === 'offline'){ stText = '已下线'; stColor = '#e57373'; }
+    else { stText = '草稿'; stColor = 'var(--text-3)'; }
+    var nextSt = a.status === 'published' ? 'offline' : 'published';
+    var opTxt = a.status === 'published' ? '下线' : '上线';
     tr.innerHTML =
       '<td class="cb-col"><input type="checkbox" class="article-cb" value="'+a.id+'"'+(state.articlesCheckedIds[a.id]?' checked':'')+' '+dis+' onchange="onArticleCBClick('+a.id+', this.checked)"></td>'+
       '<td title="'+a.title+'">'+(a.title||'').slice(0,40)+'</td>'+
-      '<td>'+(a.summary||'').slice(0,60)+'</td>'+
-      '<td>'+stText+'</td>'+
-      '<td>'+(a.updated_at||a.created_at||'')+'</td>'+
-      '<td><span class="op-link" onclick="openArticleModal('+a.id+')">编辑</span></td>';
+      '<td class="hide-mobile">'+(a.summary||'').slice(0,60)+'</td>'+
+      '<td><span style="color:'+stColor+'">'+stText+'</span></td>'+
+      '<td class="hide-mobile">'+(a.updated_at||a.created_at||'')+'</td>'+
+      '<td><span class="op-link" onclick="openArticleModal('+a.id+')">编辑</span> '+
+        '<span class="op-link" onclick="setArticleStatus('+a.id+', \''+nextSt+'\')">'+opTxt+'</span></td>';
     tbody.appendChild(tr);
   });
-  if(!rows.length) tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:40px 0">暂无数据</td></tr>';
+  if(!rows.length){
+    var tdE = document.createElement('td');
+    tdE.colSpan = 6; tdE.style.padding = '0';
+    tdE.appendChild(emptyState('doc', '还没有文章，写一篇用于安全宣教吧', '写第一篇文章', function(){ openArticleModal(0); }));
+    var trE = document.createElement('tr'); trE.appendChild(tdE); tbody.appendChild(trE);
+  }
   document.getElementById('article-count').textContent = rows.length;
   var ca = document.getElementById('articles-checkall');
   if(ca){ ca.disabled = !state.articlesEditing; ca.checked = Object.keys(state.articlesCheckedIds).length === rows.length && rows.length > 0; }
 }
+// 文章上线/下线（D-29）：只改状态，不删内容
+function setArticleStatus(id, status){
+  api('/api/articles/'+id+'/status', {method:'POST', body: JSON.stringify({status: status})})
+    .then(function(res){
+      if(res.data && res.data.ok){
+        toast(status === 'published' ? '文章已上线' : '文章已下线');
+        loadArticles();
+      } else {
+        toast((res.data && res.data.msg) || '状态切换失败', 'error');
+      }
+    })
+    .catch(function(e){ toast(humanError(e), 'error'); });
+}
+
 function onArticleCBClick(id, checked){
   if(checked) state.articlesCheckedIds[id] = true;
   else delete state.articlesCheckedIds[id];
@@ -8198,12 +8703,12 @@ function resetArticleFilter(){
 }
 function deleteSelectedArticles(){
   var ids = Object.keys(state.articlesCheckedIds).map(function(id){return +id;});
-  if(!ids.length){ toast('请先勾选文章'); return; }
+  if(!ids.length){ toast('请先勾选文章', 'warning'); return; }
   confirmDialog('删除所选','确定要删除选中的 <b style="color:#e57373">'+ids.length+'</b> 篇文章吗？', function(){
     api('/api/articles/batch-delete', {method:'POST', body: JSON.stringify({ids:ids})})
       .then(function(res){
         if(res.data.ok){ toast('已删除 '+res.data.deleted+' 篇文章'); state.articlesCheckedIds = {}; loadArticles(); }
-        else toast(res.data.msg||'删除失败');
+        else toast(res.data.msg||'删除失败', 'error');
       });
   });
 }
@@ -8240,7 +8745,7 @@ function renderPubArticles(){
 
 function openArticleDetail(id){
   api('/api/articles/'+id).then(function(res){
-    if(!res.data.ok){ toast(res.data.msg||'加载失败'); return; }
+    if(!res.data.ok){ toast(res.data.msg||'加载失败', 'error'); return; }
     var a = res.data.article;
     document.getElementById('ad-title').textContent = a.title;
     document.getElementById('ad-meta').textContent = (a.category||'综合')+' · '+(a.author||'系统')+' · '+(a.created_at||'');
@@ -8288,12 +8793,12 @@ function toggleModelsCheckAll(){
 }
 function deleteSelectedModels(){
   var ids = Object.keys(state.modelCheckedIds).map(function(id){return +id;});
-  if(!ids.length){ toast('请先勾选模型'); return; }
+  if(!ids.length){ toast('请先勾选模型', 'warning'); return; }
   confirmDialog('删除所选','确定要删除选中的 <b style="color:#e57373">'+ids.length+'</b> 个模型吗？（当前使用中的会自动跳过）', function(){
     api('/api/models/batch-delete', {method:'POST', body: JSON.stringify({ids:ids})})
       .then(function(res){
         if(res.data.ok){ toast('已删除 '+res.data.deleted+' 个模型'); state.modelCheckedIds = {}; loadModels(); }
-        else toast(res.data.msg||'删除失败');
+        else toast(res.data.msg||'删除失败', 'error');
       });
   });
 }
@@ -8325,7 +8830,14 @@ function loadDashStats(){  api('/api/stats').then(function(res){
       return;
     }
     box.innerHTML = recs.map(function(r){
-      return '<div class="record-item">'+
+      // 每行可点开详情（D-43）：原来这 4 行纯静态文字，看到可疑记录只能跳到历史页再翻
+      var cls = 'record-item';
+      var attr = '';
+      if(r.id){
+        cls += ' record-clickable';
+        attr = ' onclick="openDetail(' + r.id + ')" title="点击查看这条记录的详情"';
+      }
+      return '<div class="' + cls + '"' + attr + '>'+
         '<div class="record-time">'+r.created_at+'</div>'+
         '<div class="record-name">'+(r.image_name||'(视频)')+'</div>'+
         '<div class="record-concl">'+(r.conclusion||'')+'</div></div>';
@@ -8365,11 +8877,11 @@ function openModal(id){
 }
 function verifyBarkPwd(cb){
   var pwd = document.getElementById('bark-pwd-input').value;
-  if(!pwd){ toast('请输入账号密码'); return; }
+  if(!pwd){ toast('请输入账号密码', 'warning'); return; }
   api('/api/verify-password', {method:'POST', body: JSON.stringify({password:pwd})})
     .then(function(res){
       if(res.data.ok){ cb(); }
-      else { toast(res.data.msg || '密码错误'); }
+      else { toast(res.data.msg || '密码错误', 'error'); }
     });
 }
 function onBarkKeyFocus(){
@@ -8386,7 +8898,11 @@ function onBarkKeyBlur(){
     inp.dataset.masked = '1';
   }
 }
-// 给所有密码框自动加猴子眼睛切换（排除已手动加过的 bark-key-input）
+// 给所有密码框自动加「眼睛」切换（排除已手动加过的 bark-key-input）
+// 图标用内联 SVG（D-39）：原来用 👁/🙈 两个 emoji，不同系统渲染差异极大
+// （Windows 上是黑白字形、部分字体直接显示豆腐块），跟线性图标风格也对不上。
+var PW_EYE_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3.2"/></svg>';
+var PW_EYE_OFF_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12S5.5 5 12 5c1.9 0 3.6.6 5.1 1.4M22.5 12s-4 7-10.5 7c-1.9 0-3.6-.6-5.1-1.4"/><path d="M3 3l18 18"/><path d="M9.9 9.9a3.2 3.2 0 004.5 4.5"/></svg>';
 function initPwdEyes(){
   document.querySelectorAll('input[type="password"]').forEach(function(inp){
     if(inp.id === 'bark-key-input') return;
@@ -8398,11 +8914,21 @@ function initPwdEyes(){
     wrap.appendChild(inp);
     inp.style.paddingRight = '40px';
     var eye = document.createElement('span');
-    eye.textContent = '👁';
-    eye.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text-3);font-size:16px;user-select:none;';
-    eye.addEventListener('click', function(){
-      if(inp.type === 'password'){ inp.type = 'text'; eye.textContent = '🙈'; }
-      else { inp.type = 'password'; eye.textContent = '👁'; }
+    eye.className = 'pwd-eye';
+    eye.setAttribute('role', 'button');
+    eye.setAttribute('tabindex', '0');
+    eye.setAttribute('aria-label', '显示或隐藏密码');
+    eye.innerHTML = PW_EYE_SVG;
+    eye.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text-3);display:flex;align-items:center;user-select:none;';
+    function _toggle(){
+      var show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      eye.innerHTML = show ? PW_EYE_OFF_SVG : PW_EYE_SVG;
+      eye.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+    }
+    eye.addEventListener('click', _toggle);
+    eye.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); _toggle(); }
     });
     wrap.appendChild(eye);
   });
@@ -8418,7 +8944,7 @@ function testBark(){
   if(_barkTestBusy){ return; }   // 防重复点击，避免重复推送
   var btn = document.getElementById('bark-test-btn');
   var key = getBarkKeyVal();
-  if(!key){ toast('请先输入 Bark Key 或 URL'); return; }
+  if(!key){ toast('请先输入 Bark Key 或 URL', 'warning'); return; }
   verifyBarkPwd(function(){
     var oldText = btn ? btn.textContent : '';
     _barkTestBusy = true;
@@ -8430,9 +8956,9 @@ function testBark(){
     api('/api/test-bark', {method:'POST', body: JSON.stringify({bark_key:key})})
       .then(function(res){
         if(res.data.ok) toast('测试推送已发送，请查看 iPhone', 'success');
-        else toast(res.data.msg || '发送失败');
+        else toast(res.data.msg || '发送失败', 'error');
         restoreBtn();
-      }).catch(function(){ toast('网络错误'); restoreBtn(); });
+      }).catch(function(){ toast('网络错误', 'error'); restoreBtn(); });
   });
 }
 function saveBarkKey(){
@@ -8452,7 +8978,7 @@ function saveBarkKey(){
           if(bs){ bs.textContent = bk ? ('已配置：' + bk) : '未配置'; bs.style.color = bk ? '#5aa96c' : 'var(--text-3)'; }
           closeModal('bark-modal');
         } else {
-          toast(res.data.msg || '保存失败');
+          toast(res.data.msg || '保存失败', 'error');
         }
       });
   });
@@ -8614,7 +9140,7 @@ function uploadFbMsgImg(){
   if(!input.files.length) return;
   if(_fbMsgImages.length >= 3){ toast('最多 3 张'); input.value=''; return; }
   var f = input.files[0];
-  if(f.size > 5*1024*1024){ toast('图片不能超过 5MB'); input.value=''; return; }
+  if(f.size > 5*1024*1024){ toast('图片不能超过 5MB', 'error'); input.value=''; return; }
   var fd = new FormData();
   fd.append('file', f);
   fetch('/api/feedback/upload', {method:'POST', body:fd, credentials:'same-origin'})
@@ -8622,7 +9148,7 @@ function uploadFbMsgImg(){
     .then(function(res){
       input.value='';
       if(res.ok){ _fbMsgImages.push(res.url); renderFbMsgPreview(); }
-      else toast(res.msg||'上传失败');
+      else toast(res.msg||'上传失败', 'error');
     });
 }
 function renderFbMsgPreview(){
@@ -8633,7 +9159,7 @@ function renderFbMsgPreview(){
 function submitFbUserMsg(){
   var content = document.getElementById('fb-msg-content').value.trim();
   var notify = document.getElementById('fb-msg-notify').checked;
-  if(!content && !_fbMsgImages.length){ toast('请输入内容或上传图片'); return; }
+  if(!content && !_fbMsgImages.length){ toast('请输入内容或上传图片', 'warning'); return; }
   api('/api/feedback/'+_fbMsgFid+'/message', {method:'POST', body: JSON.stringify({content:content, images:_fbMsgImages, notify:notify})})
     .then(function(res){
       if(res.data.ok){
@@ -8643,7 +9169,7 @@ function submitFbUserMsg(){
         document.getElementById('fb-msg-preview').innerHTML = '';
         loadFbMessages(_fbMsgFid);
         loadMyFeedback();
-      } else toast(res.data.msg || '发送失败');
+      } else toast(res.data.msg || '发送失败', 'error');
     });
 }
 
@@ -8662,7 +9188,7 @@ function deleteMyFeedback(fid){
           list.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:30px;">暂无反馈记录</div>';
         }
         state._fbRenderedIds = (state._fbRenderedIds||[]).filter(function(id){return id!==fid;});
-      } else toast(res.data.msg || '删除失败');
+      } else toast(res.data.msg || '删除失败', 'error');
     });
   });
 }
@@ -8715,12 +9241,12 @@ function renderAdminFeedback(){
     var newTag = hasNewMsg ? '<span style="margin-left:6px;font-size:11px;background:#3498db;color:#fff;padding:2px 8px;border-radius:10px;font-weight:600;">新补充</span>' : '';
     return '<tr data-fid="'+f.id+'">' +
       '<td>'+f.username+newTag+'</td>' +
-      '<td style="font-size:13px;color:var(--text-2);">'+(f.user_code||'—')+'</td>' +
-      '<td style="font-size:13px;color:var(--text-2);">'+(f.user_phone||'—')+'</td>' +
-      '<td>'+fbCategoryText(f.category)+'</td>' +
+      '<td class="hide-mobile" style="font-size:13px;color:var(--text-2);">'+(f.user_code||'—')+'</td>' +
+      '<td class="hide-mobile" style="font-size:13px;color:var(--text-2);">'+(f.user_phone||'—')+'</td>' +
+      '<td class="hide-mobile">'+fbCategoryText(f.category)+'</td>' +
       '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+f.title+'</td>' +
       '<td class="fb-status-cell">'+fbStatusBadge(f.status)+'</td>' +
-      '<td style="font-size:13px;color:var(--text-2);">'+f.created_at+'</td>' +
+      '<td class="hide-mobile" style="font-size:13px;color:var(--text-2);">'+f.created_at+'</td>' +
       '<td><span class="op-link" onclick="openFeedbackDetail('+f.id+')">查看/回复</span></td>' +
       '</tr>';
   }).join('');
@@ -8769,7 +9295,7 @@ function uploadFbAdminImg(){
   if(!input.files.length) return;
   if((state._fbAdminImages||[]).length >= 3){ toast('最多 3 张'); input.value=''; return; }
   var f = input.files[0];
-  if(f.size > 5*1024*1024){ toast('图片不能超过 5MB'); input.value=''; return; }
+  if(f.size > 5*1024*1024){ toast('图片不能超过 5MB', 'error'); input.value=''; return; }
   var fd = new FormData();
   fd.append('file', f);
   fetch('/api/feedback/upload', {method:'POST', body:fd, credentials:'same-origin'})
@@ -8780,7 +9306,7 @@ function uploadFbAdminImg(){
         state._fbAdminImages = state._fbAdminImages || [];
         state._fbAdminImages.push(res.url);
         renderFbAdminImgPreview();
-      } else toast(res.msg||'上传失败');
+      } else toast(res.msg||'上传失败', 'error');
     });
 }
 function renderFbAdminImgPreview(){
@@ -8796,7 +9322,7 @@ function submitFeedbackReply(fid){
   var status = document.getElementById('fb-reply-status').value;
   var notify = document.getElementById('fb-reply-notify').checked;
   var images = state._fbAdminImages || [];
-  if(!content && !images.length){ toast('请输入回复内容或上传图片'); return; }
+  if(!content && !images.length){ toast('请输入回复内容或上传图片', 'warning'); return; }
   api('/api/feedback/'+fid+'/message', {method:'POST', body: JSON.stringify({content:content, images:images, notify:notify, status:status})})
     .then(function(res){
       if(res.data.ok){
@@ -8807,9 +9333,21 @@ function submitFeedbackReply(fid){
         loadFbMessages(fid);
         loadAdminFeedback();
       } else {
-        toast(res.data.msg || '发送失败');
+        toast(res.data.msg || '发送失败', 'error');
       }
     });
+}
+
+// 反馈字数统计（D-36）：textarea 有 maxlength=500，但用户看不到还剩多少，
+// 写到一半被截断才发现。这里实时显示「已用/上限」，接近上限变色提醒。
+function updateFbCount(){
+  var ta = document.getElementById('fb-content');
+  var el = document.getElementById('fb-count');
+  if(!ta || !el) return;
+  var max = parseInt(ta.getAttribute('maxlength') || '500', 10) || 500;
+  var n = (ta.value || '').length;
+  el.textContent = n + '/' + max;
+  el.classList.toggle('near', n >= max * 0.9);
 }
 
 function submitFeedback(){
@@ -8817,18 +9355,22 @@ function submitFeedback(){
   var title = document.getElementById('fb-title').value.trim();
   var content = document.getElementById('fb-content').value.trim();
   var notify = document.getElementById('fb-notify').checked;
-  if(!title){ toast('请填写标题'); return; }
-  api('/api/feedback', {method:'POST', body: JSON.stringify({category:cat, title:title, content:content, images:_fbImages, notify_admin:notify})})
+  if(!title){ toast('请填写标题', 'warning'); return; }  api('/api/feedback', {method:'POST', body: JSON.stringify({category:cat, title:title, content:content, images:_fbImages, notify_admin:notify})})
     .then(function(res){
       if(res.data.ok){
-        toast(res.data.msg || '提交成功', 'success');
+        // 工单号（D-36）：把记录 id 补成 5 位当工单号，用户复述问题时能对得上号
+        var ticket = res.data.id ? ('#' + String(res.data.id).padStart(5, '0')) : '';
+        toast(ticket
+          ? ('提交成功，工单号 ' + ticket + '，可在下方列表查看处理进度')
+          : (res.data.msg || '提交成功'), 'success', ticket ? 5200 : 2800);
         document.getElementById('fb-title').value = '';
         document.getElementById('fb-content').value = '';
         document.getElementById('fb-img-preview').innerHTML = '';
         _fbImages = [];
+        updateFbCount();
         loadMyFeedback();
       } else {
-        toast(res.data.msg || '提交失败');
+        toast(res.data.msg || '提交失败', 'error');
       }
     });
 }
@@ -8850,7 +9392,7 @@ function uploadFeedbackImg(){
   if(!files.length) return;
   if(_fbImages.length >= 3){ toast('最多上传 3 张图片'); input.value=''; return; }
   var f = files[0];
-  if(f.size > 5*1024*1024){ toast('图片不能超过 5MB'); input.value=''; return; }
+  if(f.size > 5*1024*1024){ toast('图片不能超过 5MB', 'error'); input.value=''; return; }
   var fd = new FormData();
   fd.append('file', f);
   toast('上传中...');
@@ -8863,9 +9405,9 @@ function uploadFeedbackImg(){
         toast('上传成功', 'success');
         renderFbImgPreview();
       } else {
-        toast(res.msg || '上传失败');
+        toast(res.msg || '上传失败', 'error');
       }
-    }).catch(function(){ toast('网络错误'); });
+    }).catch(function(){ toast('网络错误', 'error'); });
 }
 function renderFbImgPreview(){
   var box = document.getElementById('fb-img-preview');
@@ -8879,8 +9421,8 @@ function renderFbImgPreview(){
 function changeUsername(){
   var nw = document.getElementById('new-username').value.trim();
   var c = document.getElementById('captcha-name').value.trim();
-  if(!nw){ toast('请输入新用户名'); return; }
-  if(!c){ toast('请输入验证码'); return; }
+  if(!nw){ toast('请输入新用户名', 'warning'); return; }
+  if(!c){ toast('请输入验证码', 'warning'); return; }
   api('/api/change-username', {method:'POST', body: JSON.stringify({new_username:nw, captcha_id:_captchaIds.name, captcha_code:c})})
     .then(function(res){
       if(res.data.ok){
@@ -8892,7 +9434,7 @@ function changeUsername(){
         document.getElementById('new-username').value = '';
         closeModal('name-modal');
       } else {
-        toast(res.data.msg || '修改失败');
+        toast(res.data.msg || '修改失败', 'error');
         loadCaptcha('name');
         document.getElementById('captcha-name').value = '';
       }
@@ -8901,8 +9443,8 @@ function changeUsername(){
 function changePhone(){
   var np = document.getElementById('new-phone').value.trim();
   var c = document.getElementById('captcha-phone').value.trim();
-  if(!/^1\d{10}$/.test(np)){ toast('请输入正确的 11 位手机号'); return; }
-  if(!c){ toast('请输入验证码'); return; }
+  if(!/^1\d{10}$/.test(np)){ toast('请输入正确的 11 位手机号', 'warning'); return; }
+  if(!c){ toast('请输入验证码', 'warning'); return; }
   api('/api/change-phone', {method:'POST', body: JSON.stringify({new_phone:np, captcha_id:_captchaIds.phone, captcha_code:c})})
     .then(function(res){
       if(res.data.ok){
@@ -8912,7 +9454,7 @@ function changePhone(){
         document.getElementById('new-phone').value = '';
         closeModal('phone-modal');
       } else {
-        toast(res.data.msg || '修改失败');
+        toast(res.data.msg || '修改失败', 'error');
         loadCaptcha('phone');
         document.getElementById('captcha-phone').value = '';
       }
@@ -8923,9 +9465,9 @@ function changePassword(){
   var nw = document.getElementById('pw-new').value;
   var nw2 = document.getElementById('pw-new2').value;
   var c = document.getElementById('captcha-pw').value.trim();
-  if(!old || !nw){ toast('请填写完整'); return; }
+  if(!old || !nw){ toast('请填写完整', 'warning'); return; }
   if(nw !== nw2){ toast('两次新密码不一致'); return; }
-  if(!c){ toast('请输入验证码'); return; }
+  if(!c){ toast('请输入验证码', 'warning'); return; }
   api('/api/change-password', {method:'POST', body: JSON.stringify({old_password:old, new_password:nw, captcha_id:_captchaIds.pw, captcha_code:c})})
     .then(function(res){
       if(res.data.ok){
@@ -8936,7 +9478,7 @@ function changePassword(){
         document.getElementById('captcha-pw').value='';
         closeModal('pw-modal-new');
       } else {
-        toast(res.data.msg||'修改失败');
+        toast(res.data.msg||'修改失败', 'error');
         loadCaptcha('pw');
         document.getElementById('captcha-pw').value='';
       }
@@ -8956,12 +9498,12 @@ function submitNewUser(){
   var username = document.getElementById('nu-username').value.trim();
   var password = document.getElementById('nu-password').value;
   var role = document.getElementById('nu-role').value;
-  if(!phone || !/^1\d{10}$/.test(phone)){ toast('请输入正确的 11 位手机号'); return; }
-  if(!password){ toast('请填写密码'); return; }
+  if(!phone || !/^1\d{10}$/.test(phone)){ toast('请输入正确的 11 位手机号', 'warning'); return; }
+  if(!password){ toast('请填写密码', 'warning'); return; }
   api('/api/users', {method:'POST', body: JSON.stringify({phone:phone, username:username, password:password, role:role})})
     .then(function(res){
       if(res.data.ok){ closeModal('user-modal'); toast('用户已创建'); loadUsers(); }
-      else toast(res.data.msg||'创建失败');
+      else toast(res.data.msg||'创建失败', 'error');
     });
 }
 
@@ -8976,7 +9518,43 @@ function openArticleModal(aid){
   document.getElementById('aa-category').value = a ? (a.category||'综合') : '综合';
   document.getElementById('aa-status').value = a ? (a.status||'published') : 'published';
   document.getElementById('article-modal-title').textContent = a ? '编辑文章' : '新增文章';
+  renderArticlePreview();
   document.getElementById('article-modal').classList.add('show');
+}
+// 正文预览（D-28）：只认三种最常用的写法 —— 空行分段、行首「- 」列表、「## 」小标题。
+// 不做完整 Markdown，避免引入第三方库；预览和前台详情页的排版口径保持一致。
+function renderArticlePreview(){
+  var ta = document.getElementById('aa-content');
+  var box = document.getElementById('aa-preview');
+  if(!ta || !box) return;
+  var raw = (ta.value || '').replace(/\r\n/g, '\n').trim();
+  if(!raw){
+    box.innerHTML = '<p class="art-preview-empty">在左侧输入正文，这里实时预览</p>';
+    return;
+  }
+  var blocks = raw.split(/\n{2,}/);
+  var out = '';
+  blocks.forEach(function(blk){
+    var lines = blk.split('\n').filter(function(l){ return l.trim() !== ''; });
+    if(!lines.length) return;
+    // 整块都是「- 」开头 → 渲染成列表
+    var isList = lines.every(function(l){ return /^\s*[-*]\s+/.test(l); });
+    if(isList){
+      out += '<ul>' + lines.map(function(l){
+        return '<li>' + escHtml(l.replace(/^\s*[-*]\s+/, '')) + '</li>';
+      }).join('') + '</ul>';
+      return;
+    }
+    lines.forEach(function(l){
+      var m = l.match(/^\s*#{1,3}\s+(.*)$/);
+      if(m){
+        out += '<h4>' + escHtml(m[1]) + '</h4>';
+      } else {
+        out += '<p>' + escHtml(l) + '</p>';
+      }
+    });
+  });
+  box.innerHTML = out || '<p class="art-preview-empty">在左侧输入正文，这里实时预览</p>';
 }
 function submitArticle(){
   var title = document.getElementById('aa-title').value.trim();
@@ -8993,7 +9571,7 @@ function submitArticle(){
   api(url, {method: method, body: JSON.stringify(body)})
     .then(function(res){
       if(res.data.ok){ closeModal('article-modal'); toast(editingArticleId?'已更新':'已发布'); loadArticles(); }
-      else toast(res.data.msg||'保存失败');
+      else toast(res.data.msg||'保存失败', 'error');
     });
 }
 
@@ -9241,8 +9819,33 @@ function stopLbVideoBoxes(){
   var cv = document.getElementById('lightbox-video-canvas');
   if(cv){ var g = cv.getContext('2d'); g.clearRect(0, 0, cv.width, cv.height); }
 }
+// 全局 ESC：按「最上层优先」逐层关闭（D-10）
+// 以前只有图片放大层响应 ESC，确认框/帮助弹窗/详情抽屉都得找鼠标。
+// 顺序按真实堆叠走：放大层(z 99999) → 确认框 → 输入框 → 其它弹窗 → 详情抽屉。
 document.addEventListener('keydown', function(e){
-  if(e.key === 'Escape') closeLightbox();
+  if(e.key !== 'Escape') return;
+  if(e.ctrlKey || e.altKey || e.metaKey) return;
+  var lb = document.getElementById('lightbox');
+  if(lb && lb.style.display && lb.style.display !== 'none'){ closeLightbox(); return; }
+  var cm = document.getElementById('confirm-modal');
+  if(cm && cm.classList.contains('show')){
+    // 走「取消」：closeConfirm 只收起弹窗，不触发确认回调
+    closeConfirm();
+    return;
+  }
+  var pm = document.getElementById('prompt-modal');
+  if(pm && pm.classList.contains('show')){ closePrompt(); return; }
+  var masks = document.querySelectorAll('.modal-mask.show');
+  if(masks.length){
+    var top = masks[masks.length - 1];
+    // 优先点它自己的关闭按钮，保证弹窗内部的清理逻辑（停定时器、释放锁等）跟着走
+    var closer = top.querySelector('.modal-close');
+    if(closer && typeof closer.click === 'function'){ closer.click(); }
+    else { top.classList.remove('show'); }
+    return;
+  }
+  var drawer = document.getElementById('detail-drawer');
+  if(drawer && drawer.classList.contains('show')){ closeDetail(); return; }
 });
 // 给结果图/视频统一绑定点击放大（事件委托）
 // 页面关闭/刷新时释放工控页锁
@@ -9481,7 +10084,7 @@ function onTrainDatasetChange(){
 function openDatasetSplitDialog(){
   var sel = document.getElementById('tf-dataset');
   var name = sel ? sel.value : '';
-  if(!name){ toast('请先在数据集下拉框中选择要划分的数据集'); return; }
+  if(!name){ toast('请先在数据集下拉框中选择要划分的数据集', 'warning'); return; }
   var ds = (trainDatasets || []).find(function(d){ return d.name === name; });
   if(ds && ds.train_count > 0){
     toast('数据集「' + name + '」已划分过（train ' + ds.train_count + ' 张），无需再划分');
@@ -10138,8 +10741,8 @@ function agSetMode(adv){
       // 立即拉一次状态：动作标定区/映射区随模式变化，不必等下一次轮询（消除几秒空窗）
       if(typeof indFetchStatus === 'function') indFetchStatus();
       toast(res.msg || ('已切换到' + (_ag.mode === 'advanced' ? '高级模式' : '普通模式')));
-    } else { toast(res.msg || '切换失败'); }
-  }).catch(function(){ toast('请求失败'); });
+    } else { toast(res.msg || '切换失败', 'error'); }
+  }).catch(function(){ toast('请求失败', 'error'); });
 }
 
 function agOnModeChanged(){
@@ -10265,15 +10868,15 @@ function agOnClassGroupChange(cls, gid){
     body: JSON.stringify({class_group_map: map})
   }).then(function(r){ return r.json(); }).then(function(res){
     if(res.ok){ _ag.classGroupMap = res.class_group_map || {}; toast('已保存类别映射'); }
-    else { toast(res.msg || '保存失败'); }
+    else { toast(res.msg || '保存失败', 'error'); }
     indRenderClasses();
-  }).catch(function(){ toast('请求失败'); });
+  }).catch(function(){ toast('请求失败', 'error'); });
 }
 
 // ---------- 编辑器开关 ----------
 
 function agOpenEditor(){
-  if(!agIsAdvanced()){ toast('请先切换到高级模式'); return; }
+  if(!agIsAdvanced()){ toast('请先切换到高级模式', 'warning'); return; }
   _ag.open = true;
   showLoading('加载动作组...', 15);
   fetch('/api/arm/waypoints').then(function(r){ return r.json(); }).then(function(res){
@@ -10320,7 +10923,7 @@ function agOpenEditor(){
         })
         .catch(function(){});
     }
-  }).catch(function(){ hideLoading(); toast('加载失败'); });
+  }).catch(function(){ hideLoading(); toast('加载失败', 'error'); });
 }
 
 function agCloseEditor(){
@@ -10352,7 +10955,7 @@ function agLoadGroup(id){
   var _gs = document.getElementById('ag-group-select');
   if(_gs) _gs.value = String(id);
   fetch('/api/arm/groups/' + id).then(function(r){ return r.json(); }).then(function(res){
-    if(!res.ok){ toast(res.msg || '读取失败'); return; }
+    if(!res.ok){ toast(res.msg || '读取失败', 'error'); return; }
     _ag.graph = res.graph || {nodes: [], edges: []};
     _ag.selection = {};
     agResetHistory();
@@ -10365,7 +10968,7 @@ function agLoadGroup(id){
     if(used) used.textContent = (res.used_by && res.used_by.length) ? ('被引用：' + res.used_by.join('、')) : '未被任何类别引用';
     agRenderCanvas();
     agUpdateRunUI();
-  }).catch(function(){ toast('请求失败'); });
+  }).catch(function(){ toast('请求失败', 'error'); });
 }
 
 function agNewGroup(){
@@ -10381,13 +10984,13 @@ function agNewGroup(){
         _ag.currentId = res.id;   // 画布内容保留，归属切换到新组
         agLoadGroups(function(){ agRenderGroupSelect(); });
         toast('已新建「' + name + '」');
-      } else { toast(res.msg || '新建失败'); }
-    }).catch(function(){ toast('请求失败'); });
+      } else { toast(res.msg || '新建失败', 'error'); }
+    }).catch(function(){ toast('请求失败', 'error'); });
   });
 }
 
 function agRenameGroup(){
-  if(!_ag.currentId){ toast('请先选择动作组'); return; }
+  if(!_ag.currentId){ toast('请先选择动作组', 'warning'); return; }
   var cur = (_ag.groups.find(function(g){ return g.id === _ag.currentId; }) || {}).name || '';
   promptDialog('重命名', '请输入新的名称', function(name){
     name = (name || '').trim();
@@ -10402,8 +11005,8 @@ function agRenameGroup(){
         agLoadGroups(function(){ agRenderGroupSelect(); indLoadSortRecords(); });
         toast('已重命名');
       }
-      else { toast(res.msg || '失败'); }
-    }).catch(function(){ toast('请求失败'); });
+      else { toast(res.msg || '失败', 'error'); }
+    }).catch(function(){ toast('请求失败', 'error'); });
   }, cur);   // 第 4 参：预填当前名称
 }
 
@@ -10412,7 +11015,7 @@ function agRenameGroup(){
 // 功能卡->执行吸气/放气/停止。行程（近远点/直达）由后端读用户偏好，与外面开关一致。
 function agRunNode(id){
   var n = (_ag.graph.nodes || []).find(function(x){ return x.id === id; });
-  if(!n){ toast('卡片不存在'); return; }
+  if(!n){ toast('卡片不存在', 'error'); return; }
   if(!_ind.connected){ toast('机械臂未连接'); return; }
   if(_ind.busy){ toast('机械臂正忙，请稍候'); return; }
   var label = agNodeLabel(n);
@@ -10492,7 +11095,7 @@ function agUpdateWaypoint(id){
 }
 
 function agDeleteGroup(){
-  if(!_ag.currentId){ toast('请先选择动作组'); return; }
+  if(!_ag.currentId){ toast('请先选择动作组', 'warning'); return; }
   var name = (_ag.groups.find(function(g){ return g.id === _ag.currentId; }) || {}).name || '';
   confirmDialog('删除动作组', '确定删除「' + name + '」吗？', function(){
     fetch('/api/arm/groups/' + _ag.currentId, {method: 'DELETE'})
@@ -10502,29 +11105,29 @@ function agDeleteGroup(){
           agResetHistory();
           agLoadGroups(function(){ agRenderGroupSelect(); agRenderCanvas(); });
           toast('已删除');
-        } else { toast(res.msg || '删除失败'); }
-      }).catch(function(){ toast('请求失败'); });
+        } else { toast(res.msg || '删除失败', 'error'); }
+      }).catch(function(){ toast('请求失败', 'error'); });
   });
 }
 
 function agSaveGroup(){
-  if(!_ag.currentId){ toast('请先新建或选择动作组'); return; }
+  if(!_ag.currentId){ toast('请先新建或选择动作组', 'warning'); return; }
   var name = (_ag.groups.find(function(g){ return g.id === _ag.currentId; }) || {}).name || '';
   fetch('/api/arm/groups', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({id: _ag.currentId, name: name, graph: _ag.graph})
   }).then(function(r){ return r.json(); }).then(function(res){
-    toast(res.msg || (res.ok ? '已保存' : '保存失败'));
-  }).catch(function(){ toast('请求失败'); });
+    toast(res.msg || (res.ok ? '已保存' : '保存失败'), 'error');
+  }).catch(function(){ toast('请求失败', 'error'); });
 }
 
 function agRunGroup(){
-  if(!_ag.currentId){ toast('请先选择动作组'); return; }
+  if(!_ag.currentId){ toast('请先选择动作组', 'warning'); return; }
   fetch('/api/arm/groups/' + _ag.currentId + '/run', {method: 'POST'})
     .then(function(r){ return r.json(); }).then(function(res){
-      toast(res.msg || (res.ok ? '已开始运行' : '运行失败'));
+      toast(res.msg || (res.ok ? '已开始运行' : '运行失败'), 'error');
       agUpdateRunUI(res.run);
-    }).catch(function(){ toast('请求失败'); });
+    }).catch(function(){ toast('请求失败', 'error'); });
 }
 
 function agStopGroup(){
@@ -10532,7 +11135,7 @@ function agStopGroup(){
     .then(function(r){ return r.json(); }).then(function(res){
       toast(res.msg || '已停止');
       agUpdateRunUI({running: false});   // 乐观更新，下一次轮询校正
-    }).catch(function(){ toast('请求失败'); });
+    }).catch(function(){ toast('请求失败', 'error'); });
 }
 
 // ---------- 卡片库 ----------
@@ -10627,12 +11230,12 @@ function agDeleteWaypoint(wid, name){
   confirmDialog('删除途经点', '确定删除「' + name + '」吗？<br>已引用它的动作组会提示“途经点卡片不存在”，需重新选择。', function(){
     fetch('/api/arm/waypoints/' + wid, {method: 'DELETE'})
       .then(function(r){ return r.json(); }).then(function(res){
-        if(!res.ok){ toast(res.msg || '删除失败'); return; }
+        if(!res.ok){ toast(res.msg || '删除失败', 'error'); return; }
         toast('已删除途经点「' + name + '」');
         fetch('/api/arm/waypoints').then(function(r2){ return r2.json(); }).then(function(r2){
           if(r2.ok){ _ag.waypoints = r2.waypoints || []; agRenderPalette(); agRenderCanvas(); }
         }).catch(function(){});
-      }).catch(function(){ toast('请求失败'); });
+      }).catch(function(){ toast('请求失败', 'error'); });
   });
 }
 
@@ -10929,7 +11532,7 @@ document.addEventListener('keydown', function(e){
 function agCopySelection(){
   var ids = Object.keys(_ag.selection || {}).filter(function(id){ return _ag.selection[id]; });
   var nodes = (_ag.graph.nodes || []).filter(function(n){ return ids.indexOf(n.id) >= 0; });
-  if(!nodes.length){ toast('请先框选要复制的卡片'); return; }
+  if(!nodes.length){ toast('请先框选要复制的卡片', 'warning'); return; }
   // 记录相对位置（以选中集合左上角为基准），粘贴时保持原有布局
   var minX = Math.min.apply(null, nodes.map(function(n){ return n.x; }));
   var minY = Math.min.apply(null, nodes.map(function(n){ return n.y; }));
@@ -10947,8 +11550,8 @@ function agCopySelection(){
 
 function agPasteClipboard(){
   var clip = _ag.clipboard;
-  if(!clip || !clip.nodes || !clip.nodes.length){ toast('剪贴板为空，请先 Ctrl+C 复制'); return; }
-  if(!_ag.currentId && _ag.currentId !== 0){ toast('请先选择/保存一个动作组'); return; }
+  if(!clip || !clip.nodes || !clip.nodes.length){ toast('剪贴板为空，请先 Ctrl+C 复制', 'warning'); return; }
+  if(!_ag.currentId && _ag.currentId !== 0){ toast('请先选择/保存一个动作组', 'warning'); return; }
   // 连续粘贴时逐次错开，避免叠在一起
   _ag.pasteCount = (_ag.pasteCount || 0) + 1;
   var off = 24 * _ag.pasteCount;
@@ -11243,7 +11846,7 @@ function agResetJoints(){
         if(ve) ve.textContent = 1500;
       }
     }
-  }).catch(function(){ toast('重置失败'); });
+  }).catch(function(){ toast('重置失败', 'error'); });
 }
 
 function agCaptureWaypoint(){
@@ -11254,12 +11857,12 @@ function agCaptureWaypoint(){
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: name})
     }).then(function(r){ return r.json(); }).then(function(res){
-      if(!res.ok){ toast(res.msg || '保存失败'); return; }
+      if(!res.ok){ toast(res.msg || '保存失败', 'error'); return; }
       toast('已保存途经点「' + name + '」');
       fetch('/api/arm/waypoints').then(function(r2){ return r2.json(); }).then(function(r2){
         if(r2.ok){ _ag.waypoints = r2.waypoints || []; agRenderPalette(); }
       }).catch(function(){});
-    }).catch(function(){ toast('请求失败'); });
+    }).catch(function(){ toast('请求失败', 'error'); });
   });
 }
 

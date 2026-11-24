@@ -549,9 +549,13 @@ def draw_boxes_bgr(frame, boxes, names_map=None, ref_width=640):
     返回画好框的 BGR 帧。
     """
     h, w = frame.shape[:2]
-    lw = max(2, int(round(2.0 * w / ref_width)))          # 边框线宽
-    fs = max(12, int(round(12.0 * w / ref_width)))        # 标签字号
+    # 字号/线宽按原图宽度等比放大，但要卡上限：
+    # 2560 宽的图按 12*4=48px 画，标签会大到盖住目标、多目标时互相互压；
+    # 上限 28px / 5px 与前端 1:1 预览的观感一致（D-08）。
+    lw = min(5, max(2, int(round(2.0 * w / ref_width))))          # 边框线宽
+    fs = min(28, max(12, int(round(12.0 * w / ref_width))))       # 标签字号
     pad = max(3, lw)
+    placed = []   # 已排布的标签矩形：多目标时用来做纵向避让，避免标签互相盖住
 
     def _norm(b):
         if isinstance(b, dict):
@@ -582,6 +586,40 @@ def draw_boxes_bgr(frame, boxes, names_map=None, ref_width=640):
         cv2.addWeighted(overlay, 0.16, frame, 0.84, 0, frame)   # 前端同款 alpha=0.16
 
     # ② 边框 + 标签（画在混合后的帧上，保持锐利）
+    def _overlaps(rect):
+        x1, y1, x2, y2 = rect
+        for r in placed:
+            if not (x2 <= r[0] or x1 >= r[2] or y2 <= r[1] or y1 >= r[3]):
+                return True
+        return False
+
+    def _place_label(x1, y1, y2, bw, bh):
+        """给标签选纵向位置：优先贴框上沿；与已画标签相交就往上让一行；
+        顶到画面外则退回框内底部。都放不下就贴画面顶部（宁可叠一个也不丢标签）。"""
+        ly = max(0, y1 - bh)
+        for _ in range(6):
+            rect = (x1, ly, x1 + bw, ly + bh)
+            if not _overlaps(rect):
+                placed.append(rect)
+                return ly
+            if ly - (bh + 2) < 0:
+                break
+            ly -= (bh + 2)
+        # 上方排不下：改画在框内底部，再向上让位
+        ly = max(0, min(y2 - bh, h - bh))
+        for _ in range(6):
+            rect = (x1, ly, x1 + bw, ly + bh)
+            if not _overlaps(rect):
+                placed.append(rect)
+                return ly
+            if ly - (bh + 2) < 0:
+                ly = 0
+                break
+            ly -= (bh + 2)
+        rect = (x1, ly, x1 + bw, ly + bh)
+        placed.append(rect)
+        return ly
+
     for cid, cf, name, box in items:
         x1, y1, x2, y2 = [int(round(v)) for v in box]
         x1 = max(0, min(w - 1, x1)); x2 = max(0, min(w - 1, x2))
@@ -592,9 +630,10 @@ def draw_boxes_bgr(frame, boxes, names_map=None, ref_width=640):
         cv2.rectangle(frame, (x1, y1), (x2, y2), col, lw)
         label = "%s %d%%" % (name, round(cf * 100))
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs / 24.0, max(1, lw // 2))
-        ly = max(0, y1 - (th + pad * 2))                      # 标签贴框上沿，出画则贴顶
-        cv2.rectangle(frame, (x1, ly), (x1 + tw + pad * 2, ly + th + pad), col, -1)
-        cv2.putText(frame, label, (x1 + pad, ly + th + pad // 2),
+        lx = min(x1, max(0, w - (tw + pad * 2)))              # 贴右边缘的框，标签往回收，别出画
+        ly = _place_label(lx, y1, y2, tw + pad * 2, th + pad)
+        cv2.rectangle(frame, (lx, ly), (lx + tw + pad * 2, ly + th + pad), col, -1)
+        cv2.putText(frame, label, (lx + pad, ly + th + pad // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, fs / 24.0, (255, 255, 255),
                     max(1, lw // 2), cv2.LINE_AA)
     return frame

@@ -797,6 +797,45 @@ def _migrate():
             )
         except Exception as e:
             logger.debug("迁移兼容（列/表已存在或旧库不支持）: %s", e)
+        # 检测记录：类别数 / 目标数冗余列（历史列表排序用）
+        # 原来只能按 id 倒序排；要按「类别数 / 目标数」排就得在 ORDER BY 里解析 stats_json，
+        # 每条记录都要 JSON 解析一遍，几万条直接拖死列表。这里落成实列，写入时顺手填，
+        # 排序和分页都走普通列比较。
+        for _col in ("cls_count", "obj_count"):
+            try:
+                cur.execute(
+                    "ALTER TABLE detection_records ADD COLUMN %s INT NOT NULL DEFAULT 0" % _col
+                )
+            except Exception as e:
+                logger.debug("迁移兼容（列/表已存在或旧库不支持）: %s", e)
+        # 老数据回填：只处理「两列还都是 0 且 stats_json 非空非空对象」的行。
+        # 每次启动最多扫 2000 行，分多次启动补齐，避免升级后首启卡在回填上。
+        try:
+            cur.execute(
+                "SELECT id, stats_json FROM detection_records "
+                "WHERE cls_count=0 AND obj_count=0 "
+                "AND stats_json IS NOT NULL AND stats_json NOT IN ('', '{}') LIMIT 2000"
+            )
+            _backfill = cur.fetchall()
+            if _backfill:
+                logger.info("[migrate] 回填检测记录排序计数 %d 行", len(_backfill))
+            for row in _backfill:
+                try:
+                    st = json.loads(row["stats_json"] or "{}")
+                    if not isinstance(st, dict):
+                        st = {}
+                except Exception:
+                    st = {}
+                try:
+                    obj_n = sum(int(v) for v in st.values())
+                except Exception:
+                    obj_n = 0
+                cur.execute(
+                    "UPDATE detection_records SET cls_count=%s, obj_count=%s WHERE id=%s",
+                    (len(st), obj_n, row["id"]),
+                )
+        except Exception as e:
+            logger.debug("迁移兼容（回填排序计数失败）: %s", e)
         try:
             cur.execute("UPDATE articles SET updated_at=created_at WHERE updated_at IS NULL")
         except Exception as e:

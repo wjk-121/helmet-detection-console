@@ -80,6 +80,16 @@ select.input option{background:var(--card);color:var(--text)}
    会导致原生按钮与自定义图标叠加成“两个眼睛”。 */
 .login-btn{width:100%;padding:13px;border-radius:9px;font-size:15px;font-weight:600;background:var(--accent);color:#fff;margin-top:6px}
 .login-btn:hover{background:var(--accent-hover)}
+/* 记住用户名 / 忘记密码（D-40） */
+.login-extra{display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px;font-size:13px}
+.login-remember{display:flex;align-items:center;gap:7px;color:var(--text-2);cursor:pointer;user-select:none}
+.login-forgot{color:var(--accent);cursor:pointer}
+.login-forgot:hover{text-decoration:underline}
+/* 验证码：图下面挂一行「看不清？换一张」（D-35）。
+   原来只靠 title 提示，触屏和触控板上根本看不到那行提示。 */
+.captcha-box{display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0}
+.captcha-refresh{font-size:11.5px;color:var(--accent);cursor:pointer;white-space:nowrap;line-height:1.4}
+.captcha-refresh:hover{text-decoration:underline}
 .login-links{display:flex;justify-content:space-between;margin-top:18px;font-size:14px}
 .login-links a{color:var(--text-2);cursor:pointer}
 .login-links a:hover{color:var(--text)}
@@ -99,7 +109,12 @@ select.input option{background:var(--card);color:var(--text)}
 .user-name{font-size:15px;font-weight:700}
 .role-tag{display:inline-block;margin-top:3px;font-size:11px;font-weight:600;color:#fff;background:var(--orange);padding:2px 8px;border-radius:5px}
 .user-meta{font-size:12px;color:var(--text-3);margin-top:10px}
-.nav{display:flex;flex-direction:column;gap:4px;margin-top:4px;flex:1;overflow-y:auto;min-height:0;padding-right:4px;scrollbar-width:thin}
+.nav{display:flex;flex-direction:column;gap:4px;margin-top:4px;flex:1;overflow-y:auto;min-height:0;padding-right:4px;padding-bottom:14px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent;
+  /* 底部 14px 渐隐：1366×768 下 11 项导航放不下，内滚是对的，但用户看不出「还能往下滚」（D-09）。
+     mask 作用在滚动容器的可视区上、不随内容滚动，所以始终贴在底部；
+     配合 padding-bottom 让渐隐落在空白上，内容不足一屏时最后一项不会被压暗。 */
+  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 14px),transparent 100%);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 14px),transparent 100%)}
 .nav-item{display:flex;gap:12px;align-items:flex-start;padding:11px 12px;border-radius:10px;cursor:pointer;color:var(--text-2);transition:.15s;text-align:left;width:100%}
 .nav-item svg{flex-shrink:0;margin-top:2px}
 .nav-item:hover{background:rgba(255,255,255,.03);color:var(--text)}
@@ -130,6 +145,12 @@ select.input option{background:var(--card);color:var(--text)}
 .dash-top-right{display:flex;align-items:center;gap:14px}
 .dash-top-right .plain{font-size:14px;color:var(--text-2);cursor:pointer}
 .dash-top-right .plain:hover{color:var(--text)}
+/* 顶栏用户胶囊（D-46）：点一下进个人中心，窄屏只留头像不占地方 */
+.topbar-user{display:flex;align-items:center;gap:8px;padding:4px 12px 4px 4px;border-radius:999px;border:1px solid var(--line);cursor:pointer;transition:.15s}
+.topbar-user:hover{border-color:var(--accent);background:rgba(201,152,107,.08)}
+.topbar-avatar{width:27px;height:27px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;flex-shrink:0}
+.topbar-name{font-size:13px;color:var(--text-2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:640px){.topbar-name{display:none}.topbar-user{padding:4px}}
 
 .page-panel{background:var(--card);border:1px solid var(--line-soft);border-radius:var(--radius);padding:28px 30px;margin-top:20px}
 .page-panel h2{font-size:26px;font-weight:700;margin:8px 0 12px;color:#f2efe9}
@@ -141,6 +162,11 @@ select.input option{background:var(--card);color:var(--text)}
 .filter-item label{font-size:14px;color:var(--text-2);white-space:nowrap}
 .filter-item input,.filter-item select{padding:9px 12px;border-radius:8px;background:var(--card-2);border:1px solid var(--line);color:var(--text);font-size:14px;outline:none;min-width:180px}
 .filter-item input:focus,.filter-item select:focus{border-color:var(--accent)}
+/* 日期范围（D-24）：两个日期框并排，窄一点，避免把筛选条挤成两行 */
+.filter-range{display:flex;align-items:center;gap:6px}
+.filter-range input{padding:8px 10px;border-radius:8px;background:var(--card-2);border:1px solid var(--line);color:var(--text);font-size:13.5px;outline:none;min-width:0;width:140px}
+.filter-range input:focus{border-color:var(--accent)}
+.filter-range .range-dash{color:var(--text-3);font-size:13px;flex-shrink:0}
 .filter-actions{margin-left:auto;display:flex;gap:10px}
 
 /* 表格 */
@@ -188,6 +214,10 @@ table.data .op-del:hover{text-decoration:underline}
 
 /* 最近检测记录列表 */
 .record-item{position:relative;padding:14px 120px 14px 0;border-bottom:1px solid var(--line-soft)}
+/* 最近检测每行可点开详情（D-43） */
+.record-item.record-clickable{cursor:pointer;border-radius:8px;transition:background .15s;padding-left:10px;margin-left:-10px}
+.record-item.record-clickable:hover{background:rgba(201,152,107,.07)}
+.record-item.record-clickable:hover .record-name{color:var(--accent)}
 .record-item:last-child{border-bottom:none}
 .record-name{font-size:14.5px;font-weight:700;color:#f2efe9;margin-bottom:3px;word-break:break-all}
 .record-concl{font-size:13px;color:var(--text-2)}
@@ -213,6 +243,11 @@ table.data .op-del:hover{text-decoration:underline}
 .preview-head .clear:hover{color:var(--red)}
 .preview-img{width:100%;border-radius:12px;border:1px solid var(--line-soft);display:block}
 .detect-btns{display:flex;gap:12px;margin-top:18px}
+/* 摄像头画布（D-48）：原来 inline 写死 aspect-ratio:auto，只能靠 min-height 撑着，
+   1080p 下高度随窗口乱变、1366 屏又容易压到 300px 出头。
+   这里统一成 4:3（窄屏 16:9），并保底 320px，按钮仍在画布下方正常流里，不跟着画布浮动。 */
+#webcam-frame{aspect-ratio:4/3;min-height:320px}
+@media (max-width:1280px){#webcam-frame{aspect-ratio:16/9}}
 .arrow-divider{display:flex;align-items:center;justify-content:center;color:#fff;font-size:40px;color:#fff;user-select:none}
 
 /* 检测源 Tab */
@@ -312,6 +347,10 @@ table.data .op-del:hover{text-decoration:underline}
 .nav::-webkit-scrollbar-thumb:hover,
 .dash-main::-webkit-scrollbar-thumb:hover{background:rgba(201,152,107,.5)}
 *{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
+/* 全局复选框：默认原生控件在深色主题下选中只剩一个白块，看不出选中态（D-33）。
+   accent-color 让勾选框直接用品牌色，勾是系统画的白色对勾，深浅主题都清楚。 */
+input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;cursor:pointer;vertical-align:middle}
+input[type=checkbox]:disabled{opacity:.45;cursor:not-allowed}
 
 /* ===== 模型管理 ===== */
 .cur-model{background:linear-gradient(135deg,rgba(201,152,107,.12),rgba(201,152,107,.04));border:1px solid rgba(201,152,107,.35);border-radius:14px;padding:20px 22px;display:flex;align-items:center;gap:18px;margin-top:20px}
@@ -360,7 +399,8 @@ table.data .op-del:hover{text-decoration:underline}
 .det-box::before{content:"";position:absolute;inset:0;border:2px solid #22d3ee}
 
 /* ===== 个人中心 ===== */
-.profile-grid{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:20px;margin-top:20px}
+/* align-items:start：左栏卡片按内容高度排，不再被同排最高的一列拉到满高留白（D-31） */
+.profile-grid{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:20px;margin-top:20px;align-items:start}
 .big-avatar{font-size:34px;font-weight:800;color:var(--text);line-height:1}
 .profile-left .big-avatar{width:80px;height:80px;border-radius:18px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-size:34px;font-weight:800}
 .profile-name{font-size:28px;font-weight:800;margin-top:18px}
@@ -399,7 +439,12 @@ table.data .op-del:hover{text-decoration:underline}
 .switch.on .track::after{left:23px}
 
 /* toast */
-.toast{position:fixed;top:24px;left:50%;transform:translateX(-50%);background:#e8f5e9;color:#2e7d32;padding:10px 20px;border-radius:9px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:300;animation:toastIn .32s ease}
+.toast{position:fixed;top:24px;left:50%;transform:translateX(-50%);background:#e8f5e9;color:#2e7d32;padding:10px 20px;border-radius:9px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:300;animation:toastIn .32s ease;max-width:min(720px,90vw)}
+/* 三态：默认成功（绿），.err 失败（红），.warn 提醒（橙）。颜色同时作用于底色、文字与图标 */
+.toast.success{background:#e8f5e9;color:#2e7d32}
+.toast.err{background:#fdecea;color:#b3261e}
+.toast.warn{background:#fff4e5;color:#8a5300}
+.toast svg{flex:0 0 auto}
 
 /* 详情抽屉 */
 .drawer-mask{position:fixed;inset:0;background:rgba(10,14,20,.55);z-index:180;display:none;animation:maskFade .25s ease}
@@ -511,16 +556,18 @@ table.data .op-del:hover{text-decoration:underline}
   .cta-band h2{font-size:28px}
 }
 
-/* 移动端：检测历史表格只保留 复选框/图片名/操作 三列 */
+/* 移动端：所有数据表统一只保留「名称 / 关键状态 / 操作」三列（D-11）
+   以前只对 #view-history 生效，用户管理（9 列）、反馈管理（8 列）、文章管理（6 列）
+   在手机上会横向溢出，操作列被挤出屏幕点不到。 */
 @media (max-width:768px){
-  #view-history .hide-mobile{display:none !important}
-  /* 改用自动布局，让剩余三列自动撑满宽度 */
-  #view-history table.data{table-layout:auto}
+  table.data .hide-mobile{display:none !important}
+  /* 改用自动布局，让剩余列自动撑满宽度 */
+  table.data{table-layout:auto}
+  .tbl-wrap{overflow-x:auto}
+  /* 长文本单元格截断，不顶宽操作列 */
+  table.data th,table.data td{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #history-colgroup{display:none}
-  /* 文件名列过长时截断省略，不顶宽操作列 */
-  #view-history table.data td:nth-child(2){
-    max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
-  }
+  #view-history table.data td:nth-child(2){max-width:150px}
 }
 
 /* ===== 全局加载遮罩 ===== */
@@ -572,7 +619,8 @@ table.data .op-del:hover{text-decoration:underline}
 .train-empty{background:var(--card);border:1px dashed var(--line);border-radius:var(--radius);padding:46px;text-align:center;color:var(--text-3);font-size:14px}
 .train-job-card{background:var(--card);border:1px solid var(--line-soft);border-radius:12px;padding:16px 18px;display:flex;align-items:center;gap:16px}
 .tj-left{display:flex;align-items:center}
-.train-cb{width:17px;height:17px;cursor:pointer;accent-color:var(--accent)}
+/* 特异性要压过全局 input[type=checkbox]（D-33 的 15px），否则训练页勾选框会被缩一圈 */
+.train-cb[type="checkbox"]{width:17px;height:17px;cursor:pointer;accent-color:var(--accent)}
 .tj-main{flex:1;min-width:0}
 .tj-top{display:flex;align-items:center;gap:10px;margin-bottom:6px}
 .tj-name{font-weight:600;font-size:14.5px;color:var(--text);word-break:break-all}
@@ -822,7 +870,9 @@ input[type="range"]:disabled::-moz-range-thumb{background:#888;cursor:not-allowe
 }
 .viz-btn:hover{color:var(--text)}
 .viz-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
-.viz-chart-host{width:100%;height:560px;min-width:0}
+/* 图表高度跟着视口走：750px 高的笔记本上 560px 固定高会顶满整屏（D-19），
+   视口高时仍保留原来的 560px 观感。 */
+.viz-chart-host{width:100%;height:clamp(300px,calc(100vh - 320px),560px);min-width:0}
 .viz-chart-host > div{width:100% !important}
 .viz-empty{
   display:none;height:150px;align-items:center;justify-content:center;
@@ -894,3 +944,53 @@ input[type="range"]:disabled::-moz-range-thumb{background:#888;cursor:not-allowe
 .viz-skeleton .sk-shimmer{position:absolute;inset:0;background:linear-gradient(100deg,transparent 32%,rgba(255,255,255,.07) 50%,transparent 68%);transform:translateX(-100%);animation:vizSkShimmer 1.4s ease-in-out infinite}
 @keyframes vizSkPulse{0%,100%{opacity:.45}50%{opacity:.85}}
 @keyframes vizSkShimmer{0%{transform:translateX(-100%)}60%,100%{transform:translateX(100%)}}
+
+/* ===== 统一空态（C5）：图标 + 说明 + 可选操作按钮 ===== */
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:34px 18px;color:var(--text-3);text-align:center}
+.empty-state .es-ico{color:var(--text-3);opacity:.55}
+.empty-state .es-txt{margin:0;font-size:13.5px;line-height:1.6;color:var(--text-2)}
+
+/* ===== 局部 loading（C6）：只覆盖目标容器，不挡整页 ===== */
+.sec-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(12,16,22,.42);border-radius:12px;z-index:6}
+.sec-loading .sec-spinner{width:26px;height:26px;border-width:2px}
+
+/* ===== 检测「忙碌」态：按钮置灰，避免重复点击（D-14）===== */
+.btn[disabled],.btn.is-busy{opacity:.55;cursor:not-allowed;pointer-events:none}
+
+/* ===== 筛选/排序等通用小件 ===== */
+.th-sort{cursor:pointer;user-select:none;white-space:nowrap}
+.th-sort:hover{color:var(--text)}
+.th-sort .sort-ar{opacity:.35;margin-left:4px;font-size:11px}
+.th-sort.on .sort-ar{opacity:1;color:var(--accent)}
+
+/* ===== 工具栏：危险操作与普通操作分组（D-23）===== */
+.btn-danger{background:rgba(229,115,115,.12);border:1px solid rgba(229,115,115,.45);color:#e57373}
+.btn-danger:hover{background:rgba(229,115,115,.2)}
+.filter-sep{width:1px;height:18px;background:var(--line-soft);display:inline-block;margin:0 4px}
+.filter-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.filter-actions-spacer{flex:1 1 auto;min-width:8px}
+
+/* ===== 结果卡片内的下载按钮（D-16）===== */
+.dl-inline{display:flex;justify-content:flex-end;margin-top:10px}
+
+/* ===== 已选文件缩略图（D-13）===== */
+.file-item-thumb{display:flex;align-items:center;gap:10px}
+.file-thumb{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--line-soft);flex:0 0 auto}
+
+/* ===== 文章正文：编辑 / 预览分栏（D-28）===== */
+.art-mode-hint{font-weight:400;color:var(--text-3);font-size:12px;margin-left:4px}
+.art-split{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:stretch}
+.art-split textarea{width:100%;min-height:220px;padding:10px 12px;border-radius:8px;border:1px solid #3a4552;background:#1b1f26;color:#e8e4dc;font-size:13.5px;line-height:1.75;resize:vertical;outline:none;font-family:inherit}
+.art-split textarea:focus{border-color:var(--accent)}
+.art-preview{min-height:220px;max-height:340px;overflow:auto;padding:12px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card-2);color:var(--text-2);font-size:14px;line-height:1.85}
+.art-preview p{margin:0 0 10px}
+.art-preview p:last-child{margin-bottom:0}
+.art-preview h4{margin:0 0 8px;font-size:15px;color:var(--text);font-weight:700}
+.art-preview ul{margin:0 0 10px 18px;padding:0}
+.art-preview li{margin-bottom:4px}
+.art-preview .art-preview-empty{color:var(--text-3);font-size:13px}
+@media (max-width:900px){.art-split{grid-template-columns:1fr}.art-split textarea,.art-preview{min-height:150px}}
+
+/* ===== 反馈字数统计（D-36）===== */
+.fb-count{margin-top:4px;text-align:right;font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.fb-count.near{color:#e0913a;font-weight:600}
