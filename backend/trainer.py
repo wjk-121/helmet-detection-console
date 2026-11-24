@@ -105,7 +105,9 @@ def ensure_amp_weights():
     """离线环境下让 AMP 检查走本地权重，避免 ultralytics 联网 github 下载长时间重试。
 
     check_amp 固定需要 yolo26n.pt（仅用于 FP16/FP32 一致性校验，与训练 backbone 无关）。
-    若 ultralytics 权重目录里没有，就从本地预训练权重目录复制一份，实现零联网秒过。
+    发布包的 pretrained_models 是空的（官方权重不随包），但 models_lib 预装了
+    yolo26n.pt，所以按「ultralytics 缓存目录 -> pretrained_models -> models_lib」
+    的顺序查找，找到就复制一份，实现零联网秒过。
     """
     try:
         from ultralytics.utils import WEIGHTS_DIR
@@ -113,10 +115,12 @@ def ensure_amp_weights():
         dst = wdir / "yolo26n.pt"
         if dst.is_file():
             return
-        src = os.path.join(PRETRAINED_DIR, "yolo26n.pt")
-        if os.path.isfile(src):
-            wdir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+        for src in (os.path.join(PRETRAINED_DIR, "yolo26n.pt"),
+                    os.path.join(MODELS_DIR, "yolo26n.pt")):
+            if os.path.isfile(src):
+                wdir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                return
     except Exception:
         # 兜底：复制失败时离线模式仍会让 check_amp 直接跳过（amp=True），不影响训练
         pass

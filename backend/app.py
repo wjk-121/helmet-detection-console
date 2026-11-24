@@ -494,37 +494,61 @@ def _gen_user_code(conn):
 _DERIVED_TASK_SUFFIXES = ("-pose", "-seg", "-cls", "-obb")
 
 
-def _pick_default_model(files):
-    """首次初始化时挑「当前模型」：显式默认 > 常规检测模型 > 字典序第一个。
+def _is_derived_task(file_name):
+    """是否是 -pose/-seg/-cls/-obb 这类衍生任务权重（不是常规检测模型）。"""
+    return os.path.splitext(file_name)[0].lower().endswith(_DERIVED_TASK_SUFFIXES)
 
-    历史坑：以前直接取 sorted(files)[0]，而 '-'（45）< '.'（46），
-    yolo26m-pose.pt 永远排在 yolo26m.pt 前面 —— 清库重建后当前模型就变成
-    姿态估计权重（类别是人体关键点），业务侧自然"检测不出东西"。
-    现在优先 config.DEFAULT_MODEL（可用 YOLO_DEFAULT_MODEL 覆盖），
-    再不行就跳过 -pose/-seg/-cls/-obb 这些衍生任务权重。
+
+def _pick_default_model(files):
+    """首次初始化 / 当前模型失效时挑「当前模型」：显式默认 > 常规检测模型 > 字典序第一个。
+
+    发布包只预装一个 models_lib\\yolo26n.pt，正常情况下这里必然命中它；
+    保留后两级兜底，是为了客户自行往 models_lib 放权重、或删掉预装权重时，
+    仍能选出一个真实可用的检测模型：
+      - 显式默认（config.DEFAULT_MODEL，启动器按 config.env 注入）优先，
+        但它必须真实存在，绝不让当前模型指向一个不存在的文件；
+      - 其次跳过 -pose/-seg/-cls/-obb 这些衍生任务权重 —— 历史坑是
+        sorted(files)[0] 因 '-'（45）< '.'（46）选中 yolo26m-pose.pt
+        （姿态估计，类别是人体关键点），业务侧自然"检测不出东西"；
+      - 最后才退回字典序第一个。
+    一个候选都没有时返回 None：调用方不设置当前模型，推理侧会提示先选模型。
     """
     if not files:
         return None
+    # Windows 文件系统不区分大小写，这里也按大小写不敏感匹配（YOLO26N.PT 同样命中）
+    ordered = sorted(files)
+    by_lower = {f.lower(): f for f in ordered}
     preferred = (getattr(config, "DEFAULT_MODEL", "") or "").strip()
-    if preferred and preferred in files:
-        return preferred
     if preferred:
-        logger.warning("[models] 配置的默认模型 %s 不在 models_lib，按常规检测模型挑选", preferred)
-    plain = [
-        f for f in files
-        if not os.path.splitext(f)[0].lower().endswith(_DERIVED_TASK_SUFFIXES)
-    ]
-    return (plain or files)[0]
+        hit = by_lower.get(preferred.lower())
+        if hit:
+            return hit
+        logger.warning("[models] 配置的默认模型 %s 不在 models_lib，按常规检测模型挑选",
+                       preferred)
+    plain = [f for f in ordered if not _is_derived_task(f)]
+    return (plain or ordered)[0]
 
 
 def init_models_db():
-    """扫描 models_lib，同步到 models 表；选一个当前模型。"""
+    """扫描 models_lib，同步到 models 表；保证「当前模型」始终指向真实存在的文件。
+
+    三种首启/重启场景都要覆盖：
+      1) 全新库（没有 is_current）       -> 按 _pick_default_model 选一个并落库；
+      2) 库里有 is_current 且文件仍在    -> 只同步 detector.current_file（不预加载）；
+      3) 库里有 is_current 但文件被删/移走 -> 取消旧记录并改选一个可用模型；
+         一个可用模型都没有                -> 取消 is_current 并明确告警。
+    第 3 种是管理员手工清理 models_lib 后的真实场景：不处理的话当前模型会一直
+    指向不存在的权重，推理报「models_lib 中没有 xxx」，页面却仍显示「当前使用」。
+    新增记录与 is_current 变更统一在末尾 commit，避免中途 return 导致回滚。
+    """
     files = detector.scan_models()
+    file_set = set(files)
     conn = db.get_db()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id, file_name, is_current FROM models")
-            existing = {r["file_name"]: r for r in cur.fetchall()}
+            rows = cur.fetchall()
+            existing = {r["file_name"]: r for r in rows}
             # 新增扫描到的模型
             for f in files:
                 if f not in existing:
@@ -534,24 +558,37 @@ def init_models_db():
                         "VALUES (%s, %s, %s, 'ready')",
                         (os.path.splitext(f)[0], f, size),
                     )
-            # 设置当前模型
-            cur.execute("SELECT id FROM models WHERE is_current=1")
-            cur_existing = cur.fetchone()
-            if not cur_existing and files:
+            current = next((r for r in rows if r["is_current"]), None)
+            if current and current["file_name"] in file_set:
+                detector.current_file = current["file_name"]
+            else:
+                if current:
+                    logger.warning(
+                        "[models] 当前模型 %s 已不在 models_lib，自动改选可用模型",
+                        current["file_name"])
+                    cur.execute("UPDATE models SET is_current=0 WHERE id=%s",
+                                (current["id"],))
                 chosen = _pick_default_model(files)
-                cur.execute(
-                    "UPDATE models SET is_current=1 WHERE file_name=%s", (chosen,)
-                )
-                detector.set_current(chosen)
-                logger.info("[models] 首次初始化当前模型：%s（候选 %d 个）", chosen, len(files))
-            elif cur_existing:
-                with conn.cursor() as cur2:
-                    cur2.execute(
-                        "SELECT file_name FROM models WHERE is_current=1"
-                    )
-                    r = cur2.fetchone()
-                    if r:
-                        detector.current_file = r["file_name"]
+                if not chosen:
+                    logger.warning(
+                        "[models] %s 下没有任何 .pt 权重，未设置当前模型；"
+                        "请放入权重后在「模型管理」页选择", MODELS_DIR)
+                else:
+                    cur.execute("UPDATE models SET is_current=1 WHERE file_name=%s",
+                                (chosen,))
+                    try:
+                        detector.set_current(chosen)
+                    except Exception as e:  # noqa: BLE001 - 权重损坏不应阻断启动
+                        cur.execute("UPDATE models SET is_current=0 WHERE file_name=%s",
+                                    (chosen,))
+                        logger.error("[models] 预加载 %s 失败，已取消当前模型标记：%s",
+                                     chosen, e)
+                    else:
+                        if current:
+                            logger.info("[models] 已自动切换到可用模型：%s", chosen)
+                        else:
+                            logger.info("[models] 首次初始化当前模型：%s（候选 %d 个）",
+                                        chosen, len(files))
         conn.commit()
     finally:
         conn.close()

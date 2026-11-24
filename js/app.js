@@ -3224,6 +3224,15 @@ function renderModels(){
     });
   }
   grid.innerHTML='';
+  if(!MODELS.length){
+    // 发布包只预装 yolo26n.pt；客户删光权重时给明确空态，而不是一片空白
+    var empty=document.createElement('div');
+    empty.style.cssText='grid-column:1/-1;text-align:center;color:var(--text-3);padding:48px 0;font-size:13px';
+    empty.textContent = kw
+      ? ('没有匹配「'+kw+'」的模型')
+      : 'models_lib 里还没有模型，请上传 .pt 权重后点击「刷新」';
+    grid.appendChild(empty);
+  }
   MODELS.forEach(function(m){
     var card=document.createElement('div');
     card.className='model-card'+(m.status==='current'?' active':'');
@@ -9348,9 +9357,11 @@ function initTrainMeta(){
     var sel=document.getElementById('tf-backbone');
     if(!sel) return;
     sel.innerHTML='<option value="" disabled selected>请选择基础模型</option>'+
-      list.map(function(b){
-        return '<option value="'+b.file+'">'+b.file+'（'+fmtSize(b.size_bytes)+'）</option>';
-      }).join('');
+      (list.length
+        ? list.map(function(b){
+            return '<option value="'+b.file+'">'+b.file+'（'+fmtSize(b.size_bytes)+'）</option>';
+          }).join('')
+        : '<option value="" disabled>未发现基础模型，请点右侧「更新」下载</option>');
     // 恢复用户上次选择的基础模型
     var last = localStorage.getItem('train_last_backbone');
     if(last && list.some(function(b){return b.file===last;})){

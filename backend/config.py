@@ -69,12 +69,16 @@ MODELS_DIR = os.path.join(PROJECT_DIR, "models_lib")
 
 # ---------- 默认推理模型 ----------
 # 「库里还没有任何当前模型」时，首次初始化选哪个权重当当前模型（只填文件名）。
-# 历史坑：不指定时按文件名字典序取第一个，而 '-'（45）小于 '.'（46），
-# 会选中 yolo26m-pose.pt（姿态估计，类别是人体关键点，不是业务检测类别）。
-# 留空或文件不存在时，业务代码优先选「非 -pose/-seg/-cls/-obb」的常规检测模型，
-# 都没有才退回字典序第一个。可被环境变量 YOLO_DEFAULT_MODEL 覆盖
-# （打包侧由启动器按 config.env 注入）。
-DEFAULT_MODEL = os.environ.get("YOLO_DEFAULT_MODEL", "yolo26m.pt")
+# 发布包只预装 models_lib\yolo26n.pt 这一个检测权重（COCO 80 类通用模型，
+# 仅保证装完能直接跑通；业务类别由管理员在「模型管理」里换成自训权重）。
+# 两条历史坑保留说明，避免以后改回去：
+#   1) 不指定时按文件名字典序取第一个，而 '-'（45）小于 '.'（46），
+#      会选中 yolo26m-pose.pt（姿态估计，类别是人体关键点，不是业务检测类别）；
+#   2) 默认文件名写得不对/文件被删时，旧逻辑会让「当前模型」指向一个不存在的文件。
+# 现在的规则：显式默认存在就用它；不存在则优先选「非 -pose/-seg/-cls/-obb」
+# 的常规检测模型；都没有才退回字典序第一个；一个候选都没有则不设当前模型。
+# 可被环境变量 YOLO_DEFAULT_MODEL 覆盖（打包侧由启动器按 config.env 注入）。
+DEFAULT_MODEL = os.environ.get("YOLO_DEFAULT_MODEL", "yolo26n.pt")
 # 上传与结果
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 UPLOAD_IMAGES = os.path.join(UPLOAD_DIR, "images")

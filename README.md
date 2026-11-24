@@ -32,7 +32,9 @@
 
 ## 模型权重不入库
 
-`pretrained_models/`（官方预训练权重）与 `models_lib/`（用户自训权重）合计约 650 MB，其中两个权重超过 GitHub **100 MB 单文件硬上限**，因此已在 `.gitignore` 中排除。
+`pretrained_models/`（官方预训练权重）与 `models_lib/`（检测权重）在开发机上可能合计数百 MB，其中部分权重超过 GitHub **100 MB 单文件硬上限**，因此已在 `.gitignore` 中排除。
+
+发布包**只预装 `models_lib/yolo26n.pt`**，`pretrained_models/` 不随包（保持空目录，客户在训练页按需下载）。开发机上的其余权重仅用于本地自测，不会进包（由 `build/build_portable.py` 的 `PRESET_MODELS` / `INCLUDE_PRETRAINED` 控制）。
 
 请自行下载官方 YOLO 权重或备份自训权重，并保持两个目录**语义分离、不做去重**：前者是训练新模型的起跑点，后者是已训练产物，不可互换。
 
