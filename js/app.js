@@ -317,7 +317,9 @@ injectChromes();
 
 // 拓展菜单分组开合与当前视图联动（工控页展开，其余收起）
 function syncNavGroupOpen(view){
-  var shouldOpen = (view === 'industrial');
+  // 拓展功能中心与工控页同属「设备控制」分组，两个页面下都保持展开，
+  // 否则从海报墙进入模块后子项会突然收起来，侧栏位置跟着跳
+  var shouldOpen = (view === 'extensions' || view === 'industrial');
   document.querySelectorAll('.nav-group').forEach(function(g){
     g.classList.toggle('open', shouldOpen);
   });
@@ -376,7 +378,7 @@ function updateChromeUser(){
 }
 
 // ===== 路由 =====
-var PROTECTED = ['dash','detect','industrial','models','train','history','articles','users','articles-admin','profile'];
+var PROTECTED = ['dash','detect','extensions','industrial','models','train','history','articles','users','articles-admin','profile'];
 function toggleNavGroup(e){
   var btn = e.currentTarget || e.target;
   var group = btn.closest('.nav-group');
@@ -458,8 +460,9 @@ function loadExtModules(){
     // 只有模块列表变化时才重新渲染（避免闪烁）
     if(state._extModsKey === modsKey) return;
     state._extModsKey = modsKey;
+    var keys = Object.keys(mods);
     var cards = '';
-    Object.keys(mods).forEach(function(key){
+    keys.forEach(function(key){
       var m = mods[key];
       cards += '<div class="ext-poster-card ext-clickable" onclick="go(\''+key+'\')" style="--card-accent:#d4a05c;--card-glow:rgba(212,160,92,0.25);">' +
         '<div class="ext-poster-bg"></div>' +
@@ -471,8 +474,27 @@ function loadExtModules(){
         '<div class="ext-poster-enter">进入模块 →</div>' +
         '</div></div>';
     });
-    // 不再追加「更多功能 / 开发中」占位卡（D-47）：海报墙只列真实已上线的模块，
-    // 占位卡既点不动，也让人以为还有隐藏功能没开放。
+    if(!keys.length){
+      // 一个模块都没有时不能留白板：说清「为什么空」和「怎么开通」
+      cards = '<div class="ext-empty">' +
+        '<div class="ext-empty-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>' +
+        '<div class="ext-empty-title">' + (isAdmin ? '还没有接入拓展模块' : '暂未开放拓展模块') + '</div>' +
+        '<div class="ext-empty-desc">' + (isAdmin
+          ? '新的设备与功能模块接入后会自动出现在这面墙上；可在右上角「权限设置」里决定哪些用户能进入。'
+          : '如需使用拓展功能，请联系管理员为你的账号开通访问权限。') + '</div>' +
+        '</div>';
+    } else {
+      // 海报墙同时是后续新模块的展示位：留一张「规划中」卡让这面墙看得出还会继续长。
+      // 虚线 + 灰字 + 无 hover 效果，明确它不是可点入口。
+      cards += '<div class="ext-poster-card ext-placeholder">' +
+        '<div class="ext-poster-bg"></div>' +
+        '<div class="ext-poster-icon"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 5v14M5 12h14"/></svg></div>' +
+        '<div class="ext-poster-tag ext-tag-soon">规划中</div>' +
+        '<div class="ext-poster-info">' +
+        '<div class="ext-poster-title">更多拓展模块</div>' +
+        '<div class="ext-poster-desc">新的设备与功能模块接入后会在这里展示。</div>' +
+        '</div></div>';
+    }
     grid.innerHTML = cards;
   });
 }
@@ -1151,7 +1173,7 @@ function renderDetectDownloadBtn(recordId){
 // 吞掉/缓冲（fetch 永远收不到第一个字节，页面卡死在"准备中"），而普通 JSON 请求全部
 // 正常 —— 因此只依赖已被验证可靠的 JSON 通道（启动/轮询/取消全用 GET + JSON）。
 // 另：版本自检（APP_VERSION 与 /api/version 不符则自动硬刷新），彻底杜绝“一直跑旧 JS”。
-var APP_VERSION = "20261124a3";
+var APP_VERSION = "20261124a4";
 var _dlBusy = false;        // 本页是否正在下载（即时防连点）
 var _dlWatch = null;        // 超时看门狗定时器
 var _dlCancelled = false;   // 是否为用户主动取消

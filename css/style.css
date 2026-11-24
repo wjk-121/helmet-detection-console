@@ -134,6 +134,13 @@ select.input option{background:var(--card);color:var(--text)}
 .nav-sub-item{padding:8px 10px;font-size:13px}
 .nav-sub-item .nav-title{font-size:13px}
 .nav-sub-item .nav-desc{font-size:10.5px}
+/* 可折叠分组头：类名是 nav-group-header-btn，原先只有 nav-group-header 的规则，
+   导致箭头不居中、展开时也不旋转。这里补上，箭头右侧点击只展开不跳页 */
+.nav-group-header-btn{align-items:center}
+.nav-group-header-btn .nav-arrow-btn{margin-left:auto;width:22px;height:22px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border-radius:6px;color:var(--text-3);transition:.15s}
+.nav-group-header-btn .nav-arrow-btn:hover{background:rgba(255,255,255,.06);color:var(--text-2)}
+.nav-group-header-btn .nav-arrow{transition:transform .2s;opacity:.6}
+.nav-group.open .nav-group-header-btn .nav-arrow{transform:rotate(180deg)}
 .dash-main{padding:24px 32px;min-width:0;display:flex;flex-direction:column}
 .dash-main>*{flex-shrink:0}
 .dash-main>*:last-child{flex:1;min-height:0}
@@ -792,6 +799,18 @@ input[type="range"]:disabled::-moz-range-thumb{background:#888;cursor:not-allowe
   border-style: dashed;
   background: rgba(255,255,255,0.02);
 }
+/* 规划中卡片：明确不做 hover 位移与发光，读起来就是「还没上线」，不做假入口 */
+.ext-poster-card.ext-placeholder:hover{transform:none;box-shadow:none;border-color:var(--line)}
+.ext-poster-card.ext-placeholder .ext-poster-icon{color:var(--text-3);opacity:.5;background:rgba(255,255,255,.03)}
+.ext-poster-card.ext-placeholder .ext-poster-title{color:var(--text-2)}
+.ext-poster-card.ext-placeholder .ext-poster-desc{color:var(--text-3);margin-bottom:0}
+.ext-tag-soon{background:rgba(255,255,255,.08);color:var(--text-3);border-color:rgba(255,255,255,.12)}
+
+/* 一个模块都没有时的说明块（占满整行，避免海报墙变成一块白板） */
+.ext-empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:56px 24px;border:1px dashed var(--line);border-radius:16px;background:rgba(255,255,255,.015)}
+.ext-empty-icon{width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);border:1px solid var(--line-soft);color:var(--text-3);margin-bottom:16px}
+.ext-empty-title{font-size:16px;font-weight:600;color:var(--text-1);margin-bottom:8px}
+.ext-empty-desc{font-size:13px;color:var(--text-3);line-height:1.75;max-width:460px}
 
 /* ===== 容器级全屏（视频/结果图放大时保留 canvas 检测框叠加） ===== */
 /* 原生 controls 全屏只全屏 <video> 本身，叠加的框 canvas 不是它的子元素会被丢下；

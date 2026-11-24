@@ -274,7 +274,7 @@ def _gzip_response(resp):
 # 彻底杜绝“浏览器一直跑旧 JS、下载逻辑永远不更新”这类玄学报错。
 # 前端版本号唯一真源：改前端（js/app.js / css / index.html）必须同步改这里，
 # 并同步 index.html 里的 js/app.js?v=... 查询串与侧栏 #side-version 的 data-ver（D-45）。
-APP_VERSION = "20261124a3"
+APP_VERSION = "20261124a4"
 
 
 @app.get("/api/version")
