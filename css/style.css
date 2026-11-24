@@ -245,9 +245,10 @@ table.data .op-del:hover{text-decoration:underline}
 .detect-btns{display:flex;gap:12px;margin-top:18px}
 /* 摄像头画布（D-48）：原来 inline 写死 aspect-ratio:auto，只能靠 min-height 撑着，
    1080p 下高度随窗口乱变、1366 屏又容易压到 300px 出头。
-   这里统一成 4:3（窄屏 16:9），并保底 320px，按钮仍在画布下方正常流里，不跟着画布浮动。 */
-#webcam-frame{aspect-ratio:4/3;min-height:320px}
-@media (max-width:1280px){#webcam-frame{aspect-ratio:16/9}}
+   注意：这里必须跟摄像头实际出图比例一致（getUserMedia 申请的是 16:9，见 startWebcam），
+   早先错设成 4:3，video 用 object-fit:contain 就上下各顶出上百像素黑边，画面被压小。
+   16:9 + 保底 320px；按钮仍在画布下方正常流里，不跟着画布浮动。 */
+#webcam-frame{aspect-ratio:16/9;min-height:320px}
 .arrow-divider{display:flex;align-items:center;justify-content:center;color:#fff;font-size:40px;color:#fff;user-select:none}
 
 /* 检测源 Tab */
@@ -399,8 +400,16 @@ input[type=checkbox]:disabled{opacity:.45;cursor:not-allowed}
 .det-box::before{content:"";position:absolute;inset:0;border:2px solid #22d3ee}
 
 /* ===== 个人中心 ===== */
-/* align-items:start：左栏卡片按内容高度排，不再被同排最高的一列拉到满高留白（D-31） */
-.profile-grid{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:20px;margin-top:20px;align-items:start}
+/* D-31 二次修正：一开始用 align-items:start 让左卡按内容高度排，结果卡片不长高，
+   而 .dash-main>*:last-child 仍给网格 flex:1，于是「留白」从卡片内部跑到了页面底部，
+   视觉上就是卡片下面一大片空背景、两张卡底边还参差。
+   现在的做法：两卡一起撑满剩余高度（对齐底边），卡内按行等分把高度用掉。 */
+.profile-grid{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:20px;margin-top:20px;align-items:stretch}
+.profile-grid>.panel{display:flex;flex-direction:column}
+/* 左卡：头像块固定在上，4 条信息行等分剩余高度 */
+.profile-grid>.panel:first-child>div:last-child{flex:1;display:flex;flex-direction:column;justify-content:space-evenly}
+/* 右卡：标题块固定在上，4 个设置项等分剩余高度 */
+.profile-grid>.panel:last-child>div:nth-child(n+2){flex:1}
 .big-avatar{font-size:34px;font-weight:800;color:var(--text);line-height:1}
 .profile-left .big-avatar{width:80px;height:80px;border-radius:18px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-size:34px;font-weight:800}
 .profile-name{font-size:28px;font-weight:800;margin-top:18px}

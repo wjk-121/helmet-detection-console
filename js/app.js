@@ -256,7 +256,18 @@ function api(path, opts){
   if(opts.body && !(opts.body instanceof FormData)){
     opts.headers['Content-Type'] = 'application/json';
   }
-  return fetch(API + path, opts).then(function(r){
+  // C4：统一请求超时。写操作（保存 / 删除 / 改密）15 秒，读操作 20 秒。
+  // 不加超时的话后端一旦挂起，fetch 会一直 pending，界面就永远停在「正在保存…」。
+  // 需要更长的调用点可自己传 opts.timeout（毫秒），传 0 表示不限。
+  var isWrite = !!(opts.method && String(opts.method).toUpperCase() !== 'GET');
+  var ms = (opts.timeout === undefined) ? (isWrite ? 15000 : 20000) : opts.timeout;
+  delete opts.timeout;
+  var ctrl = null;
+  if(!opts.signal && ms > 0 && typeof AbortController !== 'undefined'){
+    ctrl = new AbortController();
+    opts.signal = ctrl.signal;
+  }
+  var req = fetch(API + path, opts).then(function(r){
     return r.json().then(function(d){
       if(r.status === 401 && path !== '/api/login' && state.currentUser){
         var reason = (d && d.reason) || '';
@@ -269,7 +280,18 @@ function api(path, opts){
       return {status:r.status, data:d};
     });
   });
+  return (ms > 0) ? withTimeout(req, ms, '请求', ctrl) : req;
 }
+
+// 超时兜底：少数调用点只写了 .then 没写 .catch，超时后会静默无反应。
+// 这里只接管 TimeoutError（提示一句中文），其他异常照旧抛到控制台，不掩盖真实 bug。
+window.addEventListener('unhandledrejection', function(ev){
+  var r = ev && ev.reason;
+  if(r && r.name === 'TimeoutError'){
+    toast(humanError(r), 'error');
+    ev.preventDefault();
+  }
+});
 
 // ===== 注入侧边栏和顶部栏 =====
 function injectChromes(){
@@ -1129,7 +1151,7 @@ function renderDetectDownloadBtn(recordId){
 // 吞掉/缓冲（fetch 永远收不到第一个字节，页面卡死在"准备中"），而普通 JSON 请求全部
 // 正常 —— 因此只依赖已被验证可靠的 JSON 通道（启动/轮询/取消全用 GET + JSON）。
 // 另：版本自检（APP_VERSION 与 /api/version 不符则自动硬刷新），彻底杜绝“一直跑旧 JS”。
-var APP_VERSION = "20261124a2";
+var APP_VERSION = "20261124a3";
 var _dlBusy = false;        // 本页是否正在下载（即时防连点）
 var _dlWatch = null;        // 超时看门狗定时器
 var _dlCancelled = false;   // 是否为用户主动取消
@@ -1367,7 +1389,7 @@ function downloadMarked(rid, btn){
       poll();
     })
     .catch(function(e){
-      if(!stopFlag) _dlFinish(false, '启动合成失败：' + (e && e.message ? e.message : e));
+      if(!stopFlag) _dlFinish(false, humanError(e));
     });
 }
 
@@ -1964,7 +1986,7 @@ function runBatchVideo(){
         }
         return pump().then(function(){
           if(err) return {ok:false, msg:err};
-          return data || {ok:false, msg:'未收到处理结果'};
+          return data || {ok:false, msg:'任务已中断，请重新发起'};
         });
       })
       .then(function(d){
@@ -3208,7 +3230,11 @@ function startStream(){
 }
 function pollStreamStats(){
   if(!state.streamActive || !state.streamSid) return;
-  fetch(API + '/api/detect/stream/stats?sid=' + state.streamSid, {credentials:'same-origin'})
+  // C4：单次统计 8 秒没回来就当作这次失败，交给下面的连续失败计数处理。
+  // 不加超时的话，后端一卡住，每 500 ms 发一个永远不会结束的请求，很快把浏览器
+  // 对同域的并发连接占满，整个页面其它请求也跟着排队。
+  withTimeout(fetch(API + '/api/detect/stream/stats?sid=' + state.streamSid, {credentials:'same-origin'}),
+              8000, '流统计')
     .then(function(r){return r.json();})
     .then(function(d){
       state.streamFails = 0;
@@ -3960,9 +3986,8 @@ function _delWithRetry(path, opts, onOk, failMsg, verify){
             });
             return;
           }
-          var why = (err2 && err2.message) ? err2.message : '未知网络错误';
           console.error('[删除失败]', path, err2, '(首次错误:', err, ')');
-          toast(failMsg + '（' + why + '）');
+          toast(failMsg + '（' + humanError(err2) + '）', 'error');
           hideLoading();
         });
       }, 1500);
