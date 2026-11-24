@@ -27,7 +27,7 @@ from config import (
     PRETRAINED_DIR, DATASETS_DIR, RUNS_DIR, REPORTS_DIR, MODELS_DIR,
 )
 
-logger = logging.getLogger("helmet.train")
+logger = logging.getLogger("yolo.train")
 
 IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 _JOB_NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
@@ -304,7 +304,7 @@ def fetch_latest_weights_info(series=None, tasks=None):
     tasks = tasks or TASK_SUFFIXES
     try:
         req = urllib.request.Request(
-            GH_API_LATEST, headers={"User-Agent": "helmet-detection-console"})
+            GH_API_LATEST, headers={"User-Agent": "yolo-detection-console"})
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.loads(r.read().decode("utf-8"))
     except Exception as e:
@@ -375,7 +375,7 @@ def _fetch_worker(items):
             if os.path.isfile(tmp):
                 os.remove(tmp)
             req = urllib.request.Request(
-                it["url"], headers={"User-Agent": "helmet-detection-console"})
+                it["url"], headers={"User-Agent": "yolo-detection-console"})
             with urllib.request.urlopen(req, timeout=300) as r, open(tmp, "wb") as f:
                 shutil.copyfileobj(r, f, length=1024 * 512)
             os.replace(tmp, dest)

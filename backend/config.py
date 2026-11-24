@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """后端配置：MySQL 连接、目录路径、服务端口。
-如需改 MySQL 密码，直接改下面的 DB_PASSWORD，或设置环境变量 HELMET_DB_PASSWORD。
+如需改 MySQL 密码，直接改下面的 DB_PASSWORD，或设置环境变量 YOLO_DB_PASSWORD。
 """
 import os
 import secrets
@@ -10,32 +10,33 @@ PROJECT_DIR = os.path.dirname(BASE_DIR)
 
 # ---------- MySQL ----------
 DB_CONFIG = {
-    "host": os.environ.get("HELMET_DB_HOST", "127.0.0.1"),
-    "port": int(os.environ.get("HELMET_DB_PORT", "3306")),
-    "user": os.environ.get("HELMET_DB_USER", "root"),
-    "password": os.environ.get("HELMET_DB_PASSWORD", "root"),
+    "host": os.environ.get("YOLO_DB_HOST", "127.0.0.1"),
+    "port": int(os.environ.get("YOLO_DB_PORT", "3306")),
+    "user": os.environ.get("YOLO_DB_USER", "root"),
+    "password": os.environ.get("YOLO_DB_PASSWORD", "root"),
     "charset": "utf8mb4",
 }
 # 库名允许环境变量覆盖：reset_dev_db.py 的 --db 参数、临时自测库都靠它生效
-# （否则「DROP 了 foo 却把表建到 helmet_console」会出现两处不一致）。
-DB_NAME = os.environ.get("HELMET_DB_NAME", "helmet_console")
+# （否则「DROP 了 foo 却把表建到 yolo_console」会出现两处不一致）。
+DEFAULT_DB_NAME = "yolo_console"
+DB_NAME = os.environ.get("YOLO_DB_NAME", DEFAULT_DB_NAME)
 
 # ---------- 管理员手机号 ----------
 # 默认管理员（admin/admin）的手机号，用于验证码登录 / 找回密码。
-# 优先级：环境变量 HELMET_ADMIN_PHONE > 本默认值。
-# 打包侧由 launcher 把 config.env 的 ADMIN_PHONE 经 HELMET_ADMIN_PHONE 注入，
+# 优先级：环境变量 YOLO_ADMIN_PHONE > 本默认值。
+# 打包侧由 launcher 把 config.env 的 ADMIN_PHONE 经 YOLO_ADMIN_PHONE 注入，
 # 使后端取值与 config.env 一致；开发环境无 config.env，直接用本默认值。
-ADMIN_PHONE = os.environ.get("HELMET_ADMIN_PHONE", "18313133034")
+ADMIN_PHONE = os.environ.get("YOLO_ADMIN_PHONE", "18313133034")
 
 # ---------- Flask ----------
 def _load_secret_key():
     """加载 session 签名密钥。
 
-    优先级：环境变量 HELMET_SECRET > backend/.secret_key 文件 > 临时随机值。
+    优先级：环境变量 YOLO_SECRET > backend/.secret_key 文件 > 临时随机值。
     密钥文件在首次启动时自动生成并持久化，避免每次重启都让已登录用户掉线；
-    生产环境请显式设置 HELMET_SECRET。
+    生产环境请显式设置 YOLO_SECRET。
     """
-    env = os.environ.get("HELMET_SECRET")
+    env = os.environ.get("YOLO_SECRET")
     if env:
         return env
     path = os.path.join(BASE_DIR, ".secret_key")
@@ -56,7 +57,7 @@ def _load_secret_key():
 
 SECRET_KEY = _load_secret_key()
 HOST = "0.0.0.0"
-PORT = int(os.environ.get("HELMET_PORT", "5000"))
+PORT = int(os.environ.get("YOLO_PORT", "5000"))
 
 # ---------- 数据库连接池 ----------
 # 复用 MySQL 连接，避免每请求新建连接带来的握手开销与连接数飙升。
@@ -71,9 +72,9 @@ MODELS_DIR = os.path.join(PROJECT_DIR, "models_lib")
 # 历史坑：不指定时按文件名字典序取第一个，而 '-'（45）小于 '.'（46），
 # 会选中 yolo26m-pose.pt（姿态估计，类别是人体关键点，不是业务检测类别）。
 # 留空或文件不存在时，业务代码优先选「非 -pose/-seg/-cls/-obb」的常规检测模型，
-# 都没有才退回字典序第一个。可被环境变量 HELMET_DEFAULT_MODEL 覆盖
+# 都没有才退回字典序第一个。可被环境变量 YOLO_DEFAULT_MODEL 覆盖
 # （打包侧由启动器按 config.env 注入）。
-DEFAULT_MODEL = os.environ.get("HELMET_DEFAULT_MODEL", "yolo26m.pt")
+DEFAULT_MODEL = os.environ.get("YOLO_DEFAULT_MODEL", "yolo26m.pt")
 # 上传与结果
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 UPLOAD_IMAGES = os.path.join(UPLOAD_DIR, "images")

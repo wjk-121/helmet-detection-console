@@ -21,7 +21,7 @@ import config
 from arm_controller import arm, calc_move_duration
 from detector import detector
 
-logger = logging.getLogger("helmet.action_group")
+logger = logging.getLogger("yolo.action_group")
 
 # 功能卡合法动作：吸气 / 放气 / 等待（等待 = 不吸不放，停留）
 VALID_ACTIONS = ('suck', 'release', 'off')

@@ -968,7 +968,7 @@ var _dlWatch = null;        // 超时看门狗定时器
 var _dlCancelled = false;   // 是否为用户主动取消
 var _dlRid = null;          // 当前正在下载的记录 id（用于跨标签页解锁）
 var _dlStopPoll = null;     // 停止轮询的开关（取消/完成时置停）
-var _DL_KEY = function(r){ return 'helmet_dl_busy_' + r; };
+var _DL_KEY = function(r){ return 'yolo_dl_busy_' + r; };
 
 // —— 跨标签页锁：localStorage 在本机所有同源标签页间共享 ——
 function _dlTabLock(rid){
@@ -989,7 +989,7 @@ function _dlTabUnlock(rid){
 // 与跨标签页锁相反：此标记**故意跨刷新保留**（发起人刷新后理应仍能下载），仅在
 // 真正下载完成/取消时才清除（见 _dlFinish）。后端 download_marked 仍强制校验
 // token 的 user_id，跨用户拿 token 照样 400，前端标记只是 UX 便利，绕不过后端。
-var _DL_INIT_KEY = function(r){ return 'helmet_dl_initiator_' + r; };
+var _DL_INIT_KEY = function(r){ return 'yolo_dl_initiator_' + r; };
 function _dlInitSet(rid){ try{ localStorage.setItem(_DL_INIT_KEY(rid), '1'); }catch(e){} }
 function _dlInitGet(rid){ try{ return localStorage.getItem(_DL_INIT_KEY(rid)) === '1'; }catch(e){ return false; } }
 function _dlInitClear(rid){ try{ localStorage.removeItem(_DL_INIT_KEY(rid)); }catch(e){} }
@@ -3323,7 +3323,7 @@ function uploadModel(){
   var f = fileInput && fileInput.files[0];
   if(!f){ toast('请选择模型文件'); return; }
   var nameInput = document.querySelector('#model-modal input[placeholder^="例如"]');
-  var tagInput = document.querySelector('#model-modal input[placeholder*="helmet,"]');
+  var tagInput = document.getElementById('model-tags');
   var noteArea = document.querySelector('#model-modal textarea');
   var fd = new FormData();
   fd.append('file', f);
@@ -9514,7 +9514,7 @@ function openDatasetSplitDialog(){
 }
 
 function trainOpenDir(){
-  var path=state.datasetsDir||'D:\\helmet-detection-console\\datasets';
+  var path=state.datasetsDir||'（未能从后端取到数据集目录，请刷新页面重试）';
   confirmDialog('数据集文件夹说明',
     '<div style="text-align:left;line-height:1.7;font-size:13.5px">'+
     '<p style="margin:0 0 8px"><b>文件夹位置：</b>'+path+'</p>'+
@@ -9554,7 +9554,7 @@ function copyText(text){
   }
 }
 function copyDatasetsDir(){
-  var path=state.datasetsDir||'D:\\helmet-detection-console\\datasets';
+  var path=state.datasetsDir||'（未能从后端取到数据集目录，请刷新页面重试）';
   confirmDialog('数据集文件夹说明',
     '<div style="text-align:left;line-height:1.7;font-size:13.5px">'+
     '<p style="margin:0 0 8px"><b>文件夹位置：</b>'+path+'</p>'+
@@ -9580,7 +9580,7 @@ function updateBackboneDirButton(){
   if(br) br.style.display=local?'none':'';
 }
 function trainOpenBackboneDir(){
-  var path=state.backbonesDir||'D:\\helmet-detection-console\\pretrained_models';
+  var path=state.backbonesDir||'（未能从后端取到预训练权重目录，请刷新页面重试）';
   confirmDialog('预训练权重文件夹说明',
     '<div style="text-align:left;line-height:1.7;font-size:13.5px">'+
     '<p style="margin:0 0 8px"><b>文件夹位置：</b>'+path+'</p>'+
@@ -9600,7 +9600,7 @@ function trainOpenBackboneDir(){
     });
 }
 function copyBackbonesDir(){
-  var path=state.backbonesDir||'D:\\helmet-detection-console\\pretrained_models';
+  var path=state.backbonesDir||'（未能从后端取到预训练权重目录，请刷新页面重试）';
   confirmDialog('预训练权重文件夹说明',
     '<div style="text-align:left;line-height:1.7;font-size:13.5px">'+
     '<p style="margin:0 0 8px"><b>文件夹位置：</b>'+path+'</p>'+

@@ -25,7 +25,7 @@
 
 - **Python 3.12 + conda 虚拟环境**（项目约定不使用系统 Python），`pip install -r requirements.txt`
 - GPU 版 `torch` 需按本机 CUDA 版本单独从 PyTorch 源安装，详见 `requirements.txt` 注释
-- **MySQL 8.x**：库名 `helmet_console`，开发环境默认连接本机 `3306`（`root/root`）
+- **MySQL 8.x**：库名 `yolo_console`，开发环境默认连接本机 `3306`（`root/root`）
 - 双击 `启动后端.bat` 启动；后端默认监听 `5000`
 
 > ⚠ `启动后端.bat` 与 `launcher.py` 中写有开发机的 conda 解释器绝对路径。clone 到新机器后，请把它们改成你本机虚拟环境的 `python.exe` 路径；`requirements.txt` 与代码注释里若出现本机路径，同理按实际情况调整。

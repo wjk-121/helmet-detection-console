@@ -1,5 +1,5 @@
 # ============================================================
-# helmet-detection-console 依赖清单
+# yolo-detection-console 依赖清单
 # 生成时间：2026-10-10
 # 版本来源：conda 虚拟环境 yolo26（Python 3.12）实测 `pip list`
 # 安装命令：pip install -r requirements.txt

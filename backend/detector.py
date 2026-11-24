@@ -15,7 +15,7 @@ from config import (MODELS_DIR, DEFAULT_CONF, MAX_LOADED_MODELS,
                     MODEL_LOAD_TIMEOUT_SEC, INFER_MAX_WIDTH,
                     INFER_BOX_SMOOTH, INFER_BOX_MATCH_RATIO, INFER_BOX_MISS_MAX)
 
-logger = logging.getLogger("helmet.detector")
+logger = logging.getLogger("yolo.detector")
 
 
 class Detector:

@@ -8,7 +8,7 @@ import string
 import threading
 import pymysql
 from pymysql.cursors import DictCursor
-logger = logging.getLogger("helmet.db")
+logger = logging.getLogger("yolo.db")
 from config import DB_CONFIG, DB_NAME, DB_POOL_SIZE
 
 

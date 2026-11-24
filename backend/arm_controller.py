@@ -20,7 +20,7 @@ import serial.tools.list_ports
 import db
 import config
 
-logger = logging.getLogger("helmet.arm")
+logger = logging.getLogger("yolo.arm")
 
 
 # 舵机 ID 定义（从下往上）

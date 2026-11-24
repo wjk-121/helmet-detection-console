@@ -50,7 +50,7 @@ _file_handler.suffix = "%Y-%m-%d"
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_log_fmt)
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _console_handler])
-logger = logging.getLogger("helmet")
+logger = logging.getLogger("yolo")
 logging.getLogger("werkzeug").setLevel(logging.INFO)
 # 捕获未处理异常
 import sys, traceback as _tb
@@ -500,7 +500,7 @@ def _pick_default_model(files):
     历史坑：以前直接取 sorted(files)[0]，而 '-'（45）< '.'（46），
     yolo26m-pose.pt 永远排在 yolo26m.pt 前面 —— 清库重建后当前模型就变成
     姿态估计权重（类别是人体关键点），业务侧自然"检测不出东西"。
-    现在优先 config.DEFAULT_MODEL（可用 HELMET_DEFAULT_MODEL 覆盖），
+    现在优先 config.DEFAULT_MODEL（可用 YOLO_DEFAULT_MODEL 覆盖），
     再不行就跳过 -pose/-seg/-cls/-obb 这些衍生任务权重。
     """
     if not files:
@@ -562,7 +562,7 @@ def init_admin():
 
     - user_code：前端个人资料页/用户列表展示的 8 位用户编号，创建时一并写入。
     - phone（管理员手机号）：来自 config.ADMIN_PHONE（默认值见 config.py，可由
-      环境变量 HELMET_ADMIN_PHONE 或打包 config.env 覆盖）。创建时一并写入，
+      环境变量 YOLO_ADMIN_PHONE 或打包 config.env 覆盖）。创建时一并写入，
       对「已存在但 phone 为空」的历史 admin 也幂等补写，绝不覆盖页面上改过的号码。
       这样开发环境（无 config.env、无打包启动器补写步骤）也能拿到正确手机号。
     """

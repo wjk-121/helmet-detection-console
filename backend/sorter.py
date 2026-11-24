@@ -8,7 +8,7 @@
 import time
 import threading
 import logging
-logger = logging.getLogger("helmet.sorter")
+logger = logging.getLogger("yolo.sorter")
 import json
 
 import db
